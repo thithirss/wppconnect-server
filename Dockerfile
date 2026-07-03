@@ -27,8 +27,8 @@ COPY yarn.lock ./
 RUN corepack enable && \
     corepack prepare yarn@4.14.1 --activate
 
-# Install dependencies with immutable lockfile
-RUN yarn install --immutable
+# Install dependencies
+RUN yarn install
 
 FROM base AS build
 WORKDIR /usr/src/wpp-server
