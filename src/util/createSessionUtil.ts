@@ -479,6 +479,15 @@ export default class CreateSessionUtil {
   async checkStateSession(client: WhatsAppServer, req: Request) {
     await client.onStateChange((state) => {
       req.logger.info(`State Change ${state}: ${client.session}`);
+      const stateName = String(state);
+      if (stateName === 'CONNECTED') {
+        Object.assign(client, { status: 'CONNECTED', qrcode: null });
+      } else if (['UNPAIRED', 'UNPAIRED_IDLE'].includes(stateName)) {
+        Object.assign(client, { status: 'UNPAIRED' });
+      } else if (['PAIRING', 'OPENING', 'UNLAUNCHED'].includes(stateName)) {
+        Object.assign(client, { status: stateName });
+      }
+
       const conflits = [SocketState.CONFLICT];
 
       if (conflits.includes(state)) {

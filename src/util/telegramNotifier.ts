@@ -37,6 +37,13 @@ function escapeMarkdown(text: string): string {
   return text.replace(/[_*[\]()~`>#+\-=|{}.!\\]/g, '\\$&');
 }
 
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 /**
  * Sends a text message to Telegram. Uses MarkdownV2 format.
  */
@@ -169,27 +176,27 @@ export async function notifyHttpRequestProblem(details: {
   const status =
     details.statusCode == null ? 'sem resposta' : String(details.statusCode);
   const requestId = details.requestId
-    ? `\nID: <code>${details.requestId}</code>`
+    ? `\nID: <code>${escapeHtml(details.requestId)}</code>`
     : '';
   const session = details.session
-    ? `\nSessao: <code>${details.session}</code>`
+    ? `\nSessao: <code>${escapeHtml(details.session)}</code>`
     : '';
   const body = details.bodyPreview
-    ? `\nBody: <code>${details.bodyPreview
-        .substring(0, 300)
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')}</code>`
+    ? `\nBody: <code>${escapeHtml(
+        details.bodyPreview.substring(0, 300)
+      )}</code>`
     : '';
 
   await sendTelegramMessage(
     `<b>Alerta HTTP/API</b>\n\n` +
-      `Rota: <code>${details.method} ${details.path}</code>\n` +
-      `Status: <code>${status}</code>\n` +
+      `Rota: <code>${escapeHtml(
+        `${details.method} ${details.path}`
+      )}</code>\n` +
+      `Status: <code>${escapeHtml(status)}</code>\n` +
       `Duracao: <code>${details.durationMs}ms</code>\n` +
-      `Motivo: <code>${details.reason
-        .substring(0, 200)
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')}</code>${requestId}${session}${body}\n` +
+      `Motivo: <code>${escapeHtml(
+        details.reason.substring(0, 200)
+      )}</code>${requestId}${session}${body}\n` +
       `Horario: <code>${now}</code>\n\n` +
       `<i>Use /http no bot para ver os logs HTTP/API recentes.</i>`
   );

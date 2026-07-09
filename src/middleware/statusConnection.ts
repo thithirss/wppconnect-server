@@ -68,20 +68,32 @@ export default async function statusConnection(
       10
     );
     const validateNumberStatus = envBool('WPP_VALIDATE_NUMBER_STATUS', true);
+    const verifyConnected = envBool('WPP_VERIFY_CONNECTED_BEFORE_SEND', false);
 
-    const isConnected = await withTimeout(
-      req.client.isConnected(),
-      connectionTimeoutMs,
-      'isConnected'
-    );
-
-    if (!isConnected) {
+    if (req.client.status !== 'CONNECTED') {
       return res.status(503).json({
         response: null,
         status: 'Disconnected',
         reason: 'session_not_connected',
-        message: 'A sessao do WhatsApp existe, mas nao esta conectada.',
+        message: `A sessao do WhatsApp existe, mas ainda esta em status ${req.client.status}.`,
       });
+    }
+
+    if (verifyConnected) {
+      const isConnected = await withTimeout(
+        req.client.isConnected(),
+        connectionTimeoutMs,
+        'isConnected'
+      );
+
+      if (!isConnected) {
+        return res.status(503).json({
+          response: null,
+          status: 'Disconnected',
+          reason: 'session_not_connected',
+          message: 'A sessao do WhatsApp existe, mas nao esta conectada.',
+        });
+      }
     }
 
     const numbers: any[] = [];
