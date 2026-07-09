@@ -435,7 +435,7 @@ export class WppTelegramBot {
     const existing = (clientsArray as any)[session] as any;
     if (existing) {
       try {
-        await existing.close();
+        if (typeof existing.close === 'function') await existing.close();
       } catch (_) {}
       (clientsArray as any)[session] = undefined;
     }
@@ -459,7 +459,7 @@ export class WppTelegramBot {
       const cl = (clientsArray as any)[session] as any;
       if (cl) {
         try {
-          await cl.close();
+          if (typeof cl.close === 'function') await cl.close();
         } catch (_) {}
         (clientsArray as any)[session] = undefined;
       }
@@ -487,7 +487,7 @@ export class WppTelegramBot {
         `❌ Sessão <code>${session}</code> não encontrada.`
       );
     try {
-      await cl.close();
+      if (typeof cl.close === 'function') await cl.close();
       (clientsArray as any)[session] = { status: null };
       await this.send(
         chatId,
@@ -509,7 +509,8 @@ export class WppTelegramBot {
         `❌ Sessão <code>${session}</code> não encontrada.`
       );
     try {
-      await cl.logout();
+      if (typeof cl.logout === 'function') await cl.logout();
+      else if (typeof cl.close === 'function') await cl.close();
       deleteSessionOnArray(session);
       // Remove token files
       const tokenPath = path.join(
@@ -535,7 +536,7 @@ export class WppTelegramBot {
     try {
       if (cl) {
         try {
-          await cl.close();
+          if (typeof cl.close === 'function') await cl.close();
         } catch (_) {}
       }
       (clientsArray as any)[session] = undefined;
@@ -595,7 +596,7 @@ export class WppTelegramBot {
       const cl = (clientsArray as any)[key] as any;
       if (cl) {
         try {
-          await cl.close();
+          if (typeof cl.close === 'function') await cl.close();
         } catch (_) {}
         (clientsArray as any)[key] = undefined;
         closed++;
@@ -761,7 +762,7 @@ export class WppTelegramBot {
     const existing = (clientsArray as any)[session] as any;
     if (existing) {
       try {
-        await existing.close();
+        if (typeof existing.close === 'function') await existing.close();
       } catch (_) {}
       (clientsArray as any)[session] = undefined;
     }
