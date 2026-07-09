@@ -40,6 +40,7 @@ ENV NODE_ENV=production \
     WPP_SEND_MESSAGE_TIMEOUT_MS=45000 \
     WPP_HTTP_ALERTS_ENABLED=true \
     WPP_HTTP_SLOW_MS=55000 \
+    WPP_KILL_STALE_CHROMIUM=true \
     WPP_CUSTOM_USER_DATA_DIR=/data/userDataDir/ \
     WPP_TOKENS_DIR=/data/tokens
 
@@ -50,6 +51,7 @@ RUN apk add --no-cache \
     ffmpeg \
     font-noto-emoji \
     freetype \
+    procps \
     vips \
     fftw
 

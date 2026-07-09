@@ -15,8 +15,10 @@
  */
 import { create, SocketState, StatusFind } from '@wppconnect-team/wppconnect';
 import { Request } from 'express';
+import { execFile } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import { promisify } from 'util';
 
 import { download } from '../controller/sessionController';
 import { WhatsAppServer } from '../types/WhatsAppServer';
@@ -33,6 +35,9 @@ import { clientsArray, eventEmitter } from './sessionUtil';
 import { notifyQRCodeRequired } from './telegramNotifier';
 import Factory from './tokenStore/factory';
 
+const execFileAsync = promisify(execFile);
+const sessionStartLocks = new Map<string, Promise<void>>();
+
 export default class CreateSessionUtil {
   startChatWootClient(client: any) {
     if (client.config.chatWoot && !client._chatWootClient)
@@ -44,6 +49,32 @@ export default class CreateSessionUtil {
   }
 
   async createSessionUtil(
+    req: any,
+    clientsArray: any,
+    session: string,
+    res?: any
+  ) {
+    if (sessionStartLocks.has(session)) {
+      req.logger.info(`[${session}] Start already in progress. Waiting...`);
+      await sessionStartLocks.get(session);
+      return;
+    }
+
+    const startPromise = this.createSessionUtilUnlocked(
+      req,
+      clientsArray,
+      session,
+      res
+    );
+    sessionStartLocks.set(session, startPromise);
+    try {
+      await startPromise;
+    } finally {
+      sessionStartLocks.delete(session);
+    }
+  }
+
+  private async createSessionUtilUnlocked(
     req: any,
     clientsArray: any,
     session: string,
@@ -75,15 +106,7 @@ export default class CreateSessionUtil {
         sessionUserDataDir = path.join(process.cwd(), 'userDataDir', session);
       }
 
-      const lockFile = path.join(sessionUserDataDir, 'SingletonLock');
-      try {
-        if (fs.existsSync(lockFile)) {
-          fs.unlinkSync(lockFile);
-          req.logger.info(`[${session}] Cleared orphaned SingletonLock file.`);
-        }
-      } catch (e) {
-        req.logger.warn(`[${session}] Failed to clear SingletonLock file:`, e);
-      }
+      await this.prepareChromiumProfile(sessionUserDataDir, session, req);
 
       const wppClient = await create(
         Object.assign(
@@ -218,10 +241,76 @@ export default class CreateSessionUtil {
       }
     } catch (e) {
       req.logger.error(e);
-      if (e instanceof Error && e.name == 'TimeoutError') {
-        const client = this.getClient(session) as any;
-        client.status = 'CLOSED';
+      const client = this.getClient(session) as any;
+      client.status = 'CLOSED';
+      client.qrcode = null;
+      clientsArray[session] = undefined;
+      cleanupSession(session);
+    }
+  }
+
+  private async prepareChromiumProfile(
+    sessionUserDataDir: string,
+    session: string,
+    req: any
+  ) {
+    fs.mkdirSync(sessionUserDataDir, { recursive: true });
+
+    await this.killChromiumUsingProfile(sessionUserDataDir, session, req);
+
+    const singletonFiles = [
+      'SingletonLock',
+      'SingletonCookie',
+      'SingletonSocket',
+      'DevToolsActivePort',
+    ];
+
+    for (const file of singletonFiles) {
+      const target = path.join(sessionUserDataDir, file);
+      try {
+        if (fs.existsSync(target)) {
+          fs.rmSync(target, { force: true, recursive: true });
+          req.logger.info(
+            `[${session}] Removed Chromium profile lock ${file}.`
+          );
+        }
+      } catch (e) {
+        req.logger.warn(
+          `[${session}] Failed to remove Chromium profile lock ${file}:`,
+          e
+        );
       }
+    }
+  }
+
+  private async killChromiumUsingProfile(
+    sessionUserDataDir: string,
+    session: string,
+    req: any
+  ) {
+    if (process.platform === 'win32') return;
+    if (process.env.WPP_KILL_STALE_CHROMIUM === 'false') return;
+
+    const escapedDir = sessionUserDataDir.replace(
+      /[.*+?^${}()|[\]\\]/g,
+      '\\$&'
+    );
+    const pattern = `chrom.*--user-data-dir=${escapedDir}`;
+
+    try {
+      await execFileAsync('pkill', ['-TERM', '-f', pattern], {
+        timeout: 3000,
+      });
+      req.logger.warn(
+        `[${session}] Terminated stale Chromium process using ${sessionUserDataDir}.`
+      );
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    } catch (e: any) {
+      if (e?.code === 1) return;
+      req.logger.warn(
+        `[${session}] Could not terminate stale Chromium process:`,
+        e?.message || e
+      );
     }
   }
 
