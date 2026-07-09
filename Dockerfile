@@ -21,12 +21,12 @@ COPY package.json ./
 COPY package-lock.json ./
 
 # Install dependencies
-RUN npm ci
+RUN npm ci --legacy-peer-deps
 
 FROM base AS build
 WORKDIR /usr/src/wpp-server
 COPY . .
-RUN npm ci
+RUN npm ci --legacy-peer-deps
 RUN npm run build
 
 FROM build AS runtime
