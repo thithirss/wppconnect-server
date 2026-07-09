@@ -154,7 +154,7 @@ please set the log to 'silly', copy the log that shows the error and open your i
       );
 
       for (const session of activeSessions) {
-        const client = clientsArray[session as any];
+        const client = clientsArray[session as any] as any;
         if (client && client.status !== 'CLOSED') {
           logger.info(`Closing session ${session} before shutdown...`);
           await client.close();
