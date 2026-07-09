@@ -35,6 +35,9 @@ import {
   startAllSessions,
 } from './util/functions';
 import { createLogger } from './util/logger';
+import { setServerContext } from './util/serverContext';
+import { startTelegramBot } from './util/telegramBot';
+import { notifyServerStarted } from './util/telegramNotifier';
 
 //require('dotenv').config();
 
@@ -103,10 +106,11 @@ export function initServer(serverOptions: Partial<ServerOptions>): {
   createFolders();
   const http = createServer(app);
   const io = new Socket(http, {
-    cors: {
-      origin: '*',
-    },
+    cors: { origin: '*' },
   });
+
+  // Make serverOptions, logger and io available outside of request scope
+  setServerContext(serverOptions as ServerOptions, logger, io);
 
   io.on('connection', (sock) => {
     logger.info(`ID: ${sock.id} entrou`);
@@ -124,6 +128,12 @@ export function initServer(serverOptions: Partial<ServerOptions>): {
     logger.info(`WPPConnect-Server version: ${version}`);
 
     if (serverOptions.startAllSession) startAllSessions(serverOptions, logger);
+
+    // Notify Telegram that the server has started
+    notifyServerStarted(version).catch(() => {});
+
+    // Start interactive Telegram bot
+    startTelegramBot(serverOptions as ServerOptions, logger);
   });
 
   if (config.log.level === 'error' || config.log.level === 'warn') {

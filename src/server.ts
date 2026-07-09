@@ -13,6 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+// Load .env FIRST — before any other imports that read process.env
+import 'dotenv/config';
+
 import config from './config';
 import { initServer } from './index';
 

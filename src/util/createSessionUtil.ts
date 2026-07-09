@@ -20,7 +20,15 @@ import { download } from '../controller/sessionController';
 import { WhatsAppServer } from '../types/WhatsAppServer';
 import chatWootClient from './chatWootClient';
 import { autoDownload, callWebHook, startHelper } from './functions';
+import { getRecentLogs } from './logger';
+import {
+  cleanupSession,
+  forceReconnect,
+  onSessionConnected,
+  onSessionDisconnected,
+} from './sessionMonitor';
 import { clientsArray, eventEmitter } from './sessionUtil';
+import { notifyQRCodeRequired } from './telegramNotifier';
 import Factory from './tokenStore/factory';
 
 export default class CreateSessionUtil {
@@ -99,6 +107,11 @@ export default class CreateSessionUtil {
               urlCode: string
             ) => {
               this.exportQR(req, base64Qr, urlCode, client, res);
+              // Send QR Code photo to Telegram so owner can scan it remotely
+              const qrRaw = base64Qr.replace('data:image/png;base64,', '');
+              notifyQRCodeRequired(client.session, qrRaw, attempt).catch(
+                () => {}
+              );
             },
             onLoadingScreen: (percent: string, message: string) => {
               req.logger.info(`[${session}] ${percent}% - ${message}`);
@@ -118,6 +131,25 @@ export default class CreateSessionUtil {
                   client.qrcode = null;
                   client.close();
                   clientsArray[session] = undefined;
+
+                  // ── Session Monitor: trigger auto-reconnect ──
+                  const recentLogs = getRecentLogs(80);
+                  const reconnectFn = async () => {
+                    req.logger.info(
+                      `[SessionMonitor] Auto-reconnecting session: ${session}`
+                    );
+                    client.status = 'CLOSED';
+                    clientsArray[session] = undefined;
+                    await this.createSessionUtil(req, clientsArray, session);
+                  };
+                  onSessionDisconnected(
+                    session,
+                    statusFind,
+                    req.serverOptions,
+                    req.logger,
+                    recentLogs,
+                    reconnectFn
+                  );
                 }
                 callWebHook(client, req, 'status-find', {
                   status: statusFind,
@@ -252,6 +284,15 @@ export default class CreateSessionUtil {
       //callWebHook(client, req, 'session-logged', { status: 'CONNECTED'});
       req.io.emit('session-logged', { status: true, session: client.session });
       startHelper(client, req);
+
+      // ── Session Monitor: mark session as connected, start watchdog ──
+      onSessionConnected(
+        client.session,
+        client,
+        req.serverOptions,
+        req.logger,
+        false
+      );
     } catch (error) {
       req.logger.error(error);
       req.io.emit('session-error', client.session);

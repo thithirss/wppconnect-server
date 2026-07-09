@@ -1,5 +1,7 @@
 import { ServerOptions } from './types/ServerOptions';
 
+// Telegram and monitor config are read from env vars at runtime.
+// See src/util/telegramNotifier.ts and src/util/sessionMonitor.ts.
 export default {
   secretKey: 'batatafritacomqueijo',
   host: 'http://localhost',
@@ -110,5 +112,27 @@ export default {
     defaultBucketName: null,
     endpoint: null,
     forcePathStyle: null,
+  },
+  // ── Telegram Notifier (configure via env vars on Railway) ──────────────────
+  // TELEGRAM_BOT_TOKEN  → token do bot criado no @BotFather
+  // TELEGRAM_CHAT_ID    → ID do chat/grupo para receber alertas
+  telegram: {
+    botToken: process.env.TELEGRAM_BOT_TOKEN || null,
+    chatId: process.env.TELEGRAM_CHAT_ID || null,
+  },
+  // ── Session Monitor ────────────────────────────────────────────────────────
+  // MONITOR_PING_INTERVAL_MS   → intervalo do watchdog (padrão: 120000ms = 2min)
+  // MONITOR_MAX_RETRIES        → tentativas máximas de reconexão (padrão: 5)
+  // MONITOR_RETRY_BACKOFF_MS   → base do backoff exponencial (padrão: 30000ms)
+  monitor: {
+    pingIntervalMs: parseInt(
+      process.env.MONITOR_PING_INTERVAL_MS || '120000',
+      10
+    ),
+    maxRetries: parseInt(process.env.MONITOR_MAX_RETRIES || '5', 10),
+    retryBackoffMs: parseInt(
+      process.env.MONITOR_RETRY_BACKOFF_MS || '30000',
+      10
+    ),
   },
 } as unknown as ServerOptions;

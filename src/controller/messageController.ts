@@ -16,10 +16,29 @@
 
 import { Request, Response } from 'express';
 
+import { notifyMessageFailed } from '../util/telegramNotifier';
 import { unlinkAsync } from '../util/functions';
 
 function returnError(req: Request, res: Response, error: any) {
   req.logger.error(error);
+
+  // Extract context for Telegram alert
+  const session =
+    (req as any).session || (req.client as any)?.session || 'unknown';
+  const phone = Array.isArray(req.body?.phone)
+    ? req.body.phone.join(', ')
+    : req.body?.phone || 'unknown';
+  const msgPreview =
+    typeof req.body?.message === 'string'
+      ? req.body.message.substring(0, 80)
+      : undefined;
+  const errMsg = error?.message || String(error);
+  const statusCode = error?.status || error?.statusCode || 500;
+
+  notifyMessageFailed(session, phone, msgPreview, errMsg, statusCode).catch(
+    () => {}
+  );
+
   res.status(500).json({
     status: 'Error',
     message: 'Erro ao enviar a mensagem.',

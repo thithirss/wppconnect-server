@@ -955,6 +955,128 @@ routes.post(
 
 routes.post('/api/:session/chatwoot', DeviceController.chatWoot);
 
+// ─── Session Monitor Routes ──────────────────────────────────────────────────
+import {
+  forceReconnect,
+  getAllMonitorStates,
+  getMonitorState,
+} from '../util/sessionMonitor';
+import { getRecentLogs } from '../util/logger';
+import { clientsArray } from '../util/sessionUtil';
+import CreateSessionUtil from '../util/createSessionUtil';
+
+/**
+ * GET /api/monitor/status
+ * Returns health status for all monitored sessions.
+ * Protected by verifyToken.
+ */
+routes.get('/api/monitor/status', verifyToken, (req: any, res: any) => {
+  const states = getAllMonitorStates();
+  const uptime = process.uptime();
+
+  return res.status(200).json({
+    status: 'ok',
+    uptime: Math.round(uptime),
+    uptimeHuman: formatUptime(uptime),
+    serverTime: new Date().toISOString(),
+    sessions: states.map((s) => ({
+      session: s.session,
+      isConnected: s.isConnected,
+      retryCount: s.retryCount,
+      isInCooldown: s.isInCooldown,
+      cooldownUntil: s.cooldownUntil,
+      watchdogActive: s.watchdogActive,
+      lastConnectedAt: s.lastConnectedAt,
+      lastDisconnectedAt: s.lastDisconnectedAt,
+      lastReconnectAttemptAt: s.lastReconnectAttemptAt,
+      lastDisconnectReason: s.lastDisconnectReason,
+    })),
+  });
+});
+
+/**
+ * GET /api/monitor/status/:session
+ * Returns health status for a specific session.
+ */
+routes.get(
+  '/api/monitor/status/:session',
+  verifyToken,
+  (req: any, res: any) => {
+    const { session } = req.params;
+    const state = getMonitorState(session);
+
+    if (!state) {
+      return res.status(404).json({
+        status: 'error',
+        message: `Session '${session}' not found in monitor.`,
+      });
+    }
+
+    return res.status(200).json({ status: 'ok', session: state });
+  }
+);
+
+/**
+ * POST /api/monitor/reconnect/:session
+ * Manually triggers a reconnect for the given session.
+ * Resets retry counters and cooldown.
+ */
+routes.post(
+  '/api/monitor/reconnect/:session',
+  verifyToken,
+  (req: any, res: any) => {
+    const { session } = req.params;
+    const recentLogs = getRecentLogs(80);
+    const sessionUtil = new CreateSessionUtil();
+
+    const reconnectFn = async () => {
+      req.logger.info(
+        `[Monitor API] Manual reconnect triggered for ${session}.`
+      );
+      const client = clientsArray[session] as any;
+      if (client?.status) {
+        try {
+          client.status = 'CLOSED';
+          (clientsArray as any)[session] = undefined;
+        } catch (_) {}
+      }
+      await sessionUtil.opendata(req, session);
+    };
+
+    forceReconnect(
+      session,
+      req.serverOptions,
+      req.logger,
+      recentLogs,
+      reconnectFn
+    );
+
+    return res.status(200).json({
+      status: 'ok',
+      message: `Reconnect scheduled for session '${session}'.`,
+    });
+  }
+);
+
+/**
+ * GET /api/monitor/logs
+ * Returns the recent in-memory log buffer (last 100 lines).
+ */
+routes.get('/api/monitor/logs', verifyToken, (req: any, res: any) => {
+  const count = parseInt(req.query.count as string, 10) || 100;
+  const logs = getRecentLogs(Math.min(count, 200));
+  return res.status(200).json({ status: 'ok', count: logs.length, logs });
+});
+
+function formatUptime(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  return `${h}h ${m}m ${s}s`;
+}
+
+// ─── End Monitor Routes ──────────────────────────────────────────────────────
+
 // Api Doc
 routes.use('/api-docs', swaggerUi.serve as any);
 routes.get('/api-docs', swaggerUi.setup(swaggerDocument) as any);

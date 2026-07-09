@@ -13,7 +13,43 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+import Transport from 'winston-transport';
 import winston from 'winston';
+
+// ─── In-memory Ring Buffer ───────────────────────────────────────────────────
+// Keeps the last LOG_BUFFER_SIZE log entries in memory for Telegram alerts.
+const LOG_BUFFER_SIZE = 200;
+const logBuffer: string[] = [];
+
+class MemoryRingBufferTransport extends Transport {
+  constructor(opts?: Transport.TransportStreamOptions) {
+    super(opts);
+  }
+
+  log(info: any, callback: () => void) {
+    setImmediate(() => this.emit('logged', info));
+
+    const { level, message, timestamp, stack } = info;
+    const line = stack
+      ? `[${timestamp}] ${level.toUpperCase()}: ${message} — ${stack}`
+      : `[${timestamp}] ${level.toUpperCase()}: ${message}`;
+
+    logBuffer.push(line);
+    if (logBuffer.length > LOG_BUFFER_SIZE) {
+      logBuffer.shift();
+    }
+
+    callback();
+  }
+}
+
+/**
+ * Returns a snapshot of the last N log entries stored in the ring buffer.
+ * Useful for attaching context to Telegram critical failure alerts.
+ */
+export function getRecentLogs(count = 50): string[] {
+  return logBuffer.slice(-count);
+}
 
 // Use JSON logging for log files
 // Here winston.format.errors() just seem to work
@@ -61,6 +97,16 @@ export function createLogger(options: any) {
       })
     );
   }
+
+  // Always add in-memory ring buffer (silent, no level filter on buffer itself)
+  logger.add(
+    new MemoryRingBufferTransport({
+      format: winston.format.combine(
+        winston.format.errors({ stack: true }),
+        winston.format.timestamp()
+      ),
+    })
+  );
 
   return logger;
 }
