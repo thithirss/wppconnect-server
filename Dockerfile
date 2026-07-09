@@ -20,6 +20,9 @@ RUN apk update && \
 COPY package.json ./
 COPY package-lock.json ./
 
+# Install node-gyp globally (required by sharp to build from source)
+RUN npm install -g node-gyp
+
 # Install dependencies
 RUN npm ci --legacy-peer-deps
 
