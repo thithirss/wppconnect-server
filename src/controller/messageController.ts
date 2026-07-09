@@ -133,7 +133,7 @@ export async function sendMessage(req: Request, res: Response) {
 
   const options = req.body.options || {};
   const sendTimeoutMs = parseInt(
-    process.env.WPP_SEND_MESSAGE_TIMEOUT_MS || '45000',
+    process.env.WPP_SEND_MESSAGE_TIMEOUT_MS || '35000',
     10
   );
 

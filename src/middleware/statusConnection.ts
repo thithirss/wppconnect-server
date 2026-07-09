@@ -54,12 +54,13 @@ export default async function statusConnection(
       return res.status(404).json({
         response: null,
         status: 'Disconnected',
-        message: 'A sessao do WhatsApp nao esta ativa.',
+        reason: 'session_not_found',
+        message: 'A sessao do WhatsApp nao foi iniciada neste processo.',
       });
     }
 
     const connectionTimeoutMs = parseInt(
-      process.env.WPP_CONNECTION_CHECK_TIMEOUT_MS || '10000',
+      process.env.WPP_CONNECTION_CHECK_TIMEOUT_MS || '15000',
       10
     );
     const numberStatusTimeoutMs = parseInt(
@@ -75,10 +76,11 @@ export default async function statusConnection(
     );
 
     if (!isConnected) {
-      return res.status(404).json({
+      return res.status(503).json({
         response: null,
         status: 'Disconnected',
-        message: 'A sessao do WhatsApp nao esta ativa.',
+        reason: 'session_not_connected',
+        message: 'A sessao do WhatsApp existe, mas nao esta conectada.',
       });
     }
 
@@ -126,10 +128,16 @@ export default async function statusConnection(
     return next();
   } catch (error) {
     req.logger.error(error);
-    return res.status(404).json({
+    const message = error instanceof Error ? error.message : String(error);
+    const isTimeout = message.includes('timed out');
+    return res.status(isTimeout ? 503 : 404).json({
       response: null,
       status: 'Disconnected',
-      message: 'A sessao do WhatsApp nao esta ativa.',
+      reason: isTimeout ? 'session_check_timeout' : 'session_check_failed',
+      message: isTimeout
+        ? 'A sessao do WhatsApp nao respondeu ao teste de conexao a tempo.'
+        : 'A sessao do WhatsApp nao esta ativa.',
+      error: message,
     });
   }
 }

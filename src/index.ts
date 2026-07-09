@@ -147,8 +147,12 @@ export function initServer(serverOptions: Partial<ServerOptions>): {
         req.params?.session ||
         (req.originalUrl || req.url).match(/^\/api\/([^/]+)/)?.[1];
       const statusCode = res.headersSent ? res.statusCode : undefined;
+      const path = req.originalUrl || req.url;
+      const alert4xx =
+        process.env.WPP_HTTP_ALERT_4XX === 'true' ||
+        /^\/api\/[^/]+\/send-/i.test(path);
       const line =
-        `${req.method} ${req.originalUrl || req.url} ` +
+        `${req.method} ${path} ` +
         `status=${statusCode ?? 'no-response'} duration=${durationMs}ms ` +
         `reason=${reason}${session ? ` session=${session}` : ''}` +
         `${requestId ? ` requestId=${requestId}` : ''}`;
@@ -160,12 +164,13 @@ export function initServer(serverOptions: Partial<ServerOptions>): {
         (forceAlert ||
           reason !== 'finish' ||
           durationMs >= slowMs ||
-          (statusCode != null && statusCode >= 500));
+          (statusCode != null && statusCode >= 500) ||
+          (alert4xx && statusCode != null && statusCode >= 400));
 
       if (shouldAlert) {
         notifyHttpRequestProblem({
           method: req.method,
-          path: req.originalUrl || req.url,
+          path,
           statusCode,
           durationMs,
           reason,
