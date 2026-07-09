@@ -961,7 +961,7 @@ import {
   getAllMonitorStates,
   getMonitorState,
 } from '../util/sessionMonitor';
-import { getRecentLogs } from '../util/logger';
+import { getRecentHttpLogs, getRecentLogs } from '../util/logger';
 import { clientsArray } from '../util/sessionUtil';
 import CreateSessionUtil from '../util/createSessionUtil';
 
@@ -1065,6 +1065,16 @@ routes.post(
 routes.get('/api/monitor/logs', verifyToken, (req: any, res: any) => {
   const count = parseInt(req.query.count as string, 10) || 100;
   const logs = getRecentLogs(Math.min(count, 200));
+  return res.status(200).json({ status: 'ok', count: logs.length, logs });
+});
+
+/**
+ * GET /api/monitor/http-logs
+ * Returns the recent HTTP/API request buffer.
+ */
+routes.get('/api/monitor/http-logs', verifyToken, (req: any, res: any) => {
+  const count = parseInt(req.query.count as string, 10) || 100;
+  const logs = getRecentHttpLogs(Math.min(count, 200));
   return res.status(200).json({ status: 'ok', count: logs.length, logs });
 });
 

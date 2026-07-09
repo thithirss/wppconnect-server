@@ -153,6 +153,48 @@ export async function notifyServerStarted(version: string): Promise<void> {
   );
 }
 
+export async function notifyHttpRequestProblem(details: {
+  method: string;
+  path: string;
+  statusCode?: number;
+  durationMs: number;
+  reason: string;
+  requestId?: string;
+  session?: string;
+  bodyPreview?: string;
+}): Promise<void> {
+  const now = new Date().toLocaleString('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+  });
+  const status =
+    details.statusCode == null ? 'sem resposta' : String(details.statusCode);
+  const requestId = details.requestId
+    ? `\nID: <code>${details.requestId}</code>`
+    : '';
+  const session = details.session
+    ? `\nSessao: <code>${details.session}</code>`
+    : '';
+  const body = details.bodyPreview
+    ? `\nBody: <code>${details.bodyPreview
+        .substring(0, 300)
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')}</code>`
+    : '';
+
+  await sendTelegramMessage(
+    `<b>Alerta HTTP/API</b>\n\n` +
+      `Rota: <code>${details.method} ${details.path}</code>\n` +
+      `Status: <code>${status}</code>\n` +
+      `Duracao: <code>${details.durationMs}ms</code>\n` +
+      `Motivo: <code>${details.reason
+        .substring(0, 200)
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')}</code>${requestId}${session}${body}\n` +
+      `Horario: <code>${now}</code>\n\n` +
+      `<i>Use /http no bot para ver os logs HTTP/API recentes.</i>`
+  );
+}
+
 export async function notifySessionConnected(session: string): Promise<void> {
   const now = new Date().toLocaleString('pt-BR', {
     timeZone: 'America/Sao_Paulo',

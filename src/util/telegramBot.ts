@@ -6,7 +6,7 @@ import { Logger } from 'winston';
 
 import config from '../config';
 import { ServerOptions } from '../types/ServerOptions';
-import { getRecentLogs } from './logger';
+import { getRecentHttpLogs, getRecentLogs } from './logger';
 import {
   forceReconnect,
   getAllMonitorStates,
@@ -77,6 +77,16 @@ export class WppTelegramBot {
       { command: 'logs', description: '📋 Ver logs — /logs [N]' },
       { command: 'ajuda', description: '❓ Ajuda' },
     ];
+    commands.splice(
+      commands.length - 1,
+      0,
+      { command: 'http', description: 'HTTP/API logs e erros - /http [N]' },
+      {
+        command: 'httplogs',
+        description: 'HTTP/API logs e erros - /httplogs [N]',
+      }
+    );
+
     await api
       .post(`${this.BASE}/setMyCommands`, { commands }, { timeout: 10000 })
       .catch(() => {});
@@ -376,10 +386,9 @@ export class WppTelegramBot {
   }
 
   private async sendHttpLogs(chatId: number, count: number) {
-    // Requires importing getRecentHttpLogs from logger
-    const { getRecentHttpLogs } = require('./logger');
     const logs = getRecentHttpLogs(Math.min(count, 200));
-    if (!logs.length) return this.send(chatId, '📭 Nenhum log HTTP disponível.');
+    if (!logs.length)
+      return this.send(chatId, '📭 Nenhum log HTTP disponível.');
     const content = logs.join('\n');
     if (content.length < 3500) {
       await this.send(

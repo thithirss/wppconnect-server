@@ -18,62 +18,118 @@ import { NextFunction, Request, Response } from 'express';
 
 import { contactToArray } from '../util/functions';
 
+const envBool = (name: string, fallback: boolean): boolean => {
+  const value = process.env[name];
+  if (value == null || value === '') return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
+};
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string
+): Promise<T> {
+  let timer: NodeJS.Timeout;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${timeoutMs}ms`)),
+      timeoutMs
+    );
+  });
+
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer!);
+  }
+}
+
 export default async function statusConnection(
   req: Request,
   res: Response,
   next: NextFunction
 ) {
   try {
-    const numbers: any = [];
-    if (req.client && req.client.isConnected) {
-      await req.client.isConnected();
-
-      const localArr = contactToArray(
-        req.body.phone || [],
-        req.body.isGroup,
-        req.body.isNewsletter,
-        req.body.isLid
-      );
-      let index = 0;
-      for (const contact of localArr) {
-        if (req.body.isGroup || req.body.isNewsletter) {
-          localArr[index] = contact;
-        } else if (numbers.indexOf(contact) < 0) {
-          console.log(contact);
-          const profile: any = await req.client
-            .checkNumberStatus(contact)
-            .catch((error) => console.log(error));
-          if (!profile?.numberExists) {
-            const num = (contact as any).split('@')[0];
-            res.status(400).json({
-              response: null,
-              status: 'Connected',
-              message: `O número ${num} não existe.`,
-            });
-          } else {
-            if ((numbers as any).indexOf(profile.id._serialized) < 0) {
-              (numbers as any).push(profile.id._serialized);
-            }
-            (localArr as any)[index] = profile.id._serialized;
-          }
-        }
-        index++;
-      }
-      req.body.phone = localArr;
-    } else {
-      res.status(404).json({
+    if (!req.client || !req.client.isConnected) {
+      return res.status(404).json({
         response: null,
         status: 'Disconnected',
-        message: 'A sessão do WhatsApp não está ativa.',
+        message: 'A sessao do WhatsApp nao esta ativa.',
       });
     }
-    next();
+
+    const connectionTimeoutMs = parseInt(
+      process.env.WPP_CONNECTION_CHECK_TIMEOUT_MS || '10000',
+      10
+    );
+    const numberStatusTimeoutMs = parseInt(
+      process.env.WPP_NUMBER_STATUS_TIMEOUT_MS || '12000',
+      10
+    );
+    const validateNumberStatus = envBool('WPP_VALIDATE_NUMBER_STATUS', true);
+
+    const isConnected = await withTimeout(
+      req.client.isConnected(),
+      connectionTimeoutMs,
+      'isConnected'
+    );
+
+    if (!isConnected) {
+      return res.status(404).json({
+        response: null,
+        status: 'Disconnected',
+        message: 'A sessao do WhatsApp nao esta ativa.',
+      });
+    }
+
+    const numbers: any[] = [];
+    const localArr = contactToArray(
+      req.body.phone || [],
+      req.body.isGroup,
+      req.body.isNewsletter,
+      req.body.isLid
+    );
+
+    let index = 0;
+    for (const contact of localArr) {
+      if (req.body.isGroup || req.body.isNewsletter || !validateNumberStatus) {
+        localArr[index] = contact;
+      } else if (numbers.indexOf(contact) < 0) {
+        req.logger.debug(`Checking WhatsApp number status: ${contact}`);
+        const profile: any = await withTimeout(
+          req.client.checkNumberStatus(contact),
+          numberStatusTimeoutMs,
+          `checkNumberStatus ${contact}`
+        ).catch((error) => {
+          req.logger.warn(error);
+          return null;
+        });
+
+        if (!profile?.numberExists) {
+          const num = (contact as any).split('@')[0];
+          return res.status(400).json({
+            response: null,
+            status: 'Connected',
+            message: `O numero ${num} nao existe ou nao respondeu a validacao a tempo.`,
+          });
+        }
+
+        if (numbers.indexOf(profile.id._serialized) < 0) {
+          numbers.push(profile.id._serialized);
+        }
+        localArr[index] = profile.id._serialized;
+      }
+      index++;
+    }
+
+    req.body.phone = localArr;
+    return next();
   } catch (error) {
     req.logger.error(error);
-    res.status(404).json({
+    return res.status(404).json({
       response: null,
       status: 'Disconnected',
-      message: 'A sessão do WhatsApp não está ativa.',
+      message: 'A sessao do WhatsApp nao esta ativa.',
     });
   }
 }

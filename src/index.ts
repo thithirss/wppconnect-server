@@ -38,7 +38,10 @@ import {
 import { createLogger, addHttpLog } from './util/logger';
 import { setServerContext } from './util/serverContext';
 import { startTelegramBot } from './util/telegramBot';
-import { notifyServerStarted } from './util/telegramNotifier';
+import {
+  notifyHttpRequestProblem,
+  notifyServerStarted,
+} from './util/telegramNotifier';
 import { clientsArray } from './util/sessionUtil';
 
 //require('dotenv').config();
@@ -112,9 +115,73 @@ export function initServer(serverOptions: Partial<ServerOptions>): {
     next();
   });
 
-  // Log all HTTP requests to separate buffer
+  // Track HTTP requests separately so the Telegram bot can report API issues
+  // that do not necessarily become application exceptions, such as client aborts.
   app.use((req, res, next) => {
-    addHttpLog(`${req.method} ${req.url}`);
+    const start = Date.now();
+    let reported = false;
+    const requestId =
+      (req.headers['x-request-id'] as string) ||
+      (req.headers['x-railway-request-id'] as string) ||
+      (req.headers['cf-ray'] as string) ||
+      '';
+    const httpAlertsEnabled = process.env.WPP_HTTP_ALERTS_ENABLED !== 'false';
+    const slowMs = parseInt(process.env.WPP_HTTP_SLOW_MS || '55000', 10);
+
+    const bodyPreview = (() => {
+      try {
+        if (!req.body || Object.keys(req.body).length === 0) return undefined;
+        return JSON.stringify(req.body);
+      } catch (_) {
+        return undefined;
+      }
+    })();
+
+    const record = (reason: string, forceAlert = false) => {
+      if (reported) return;
+      reported = true;
+
+      const durationMs = Date.now() - start;
+      const session =
+        (req as any).session ||
+        req.params?.session ||
+        (req.originalUrl || req.url).match(/^\/api\/([^/]+)/)?.[1];
+      const statusCode = res.headersSent ? res.statusCode : undefined;
+      const line =
+        `${req.method} ${req.originalUrl || req.url} ` +
+        `status=${statusCode ?? 'no-response'} duration=${durationMs}ms ` +
+        `reason=${reason}${session ? ` session=${session}` : ''}` +
+        `${requestId ? ` requestId=${requestId}` : ''}`;
+
+      addHttpLog(line);
+
+      const shouldAlert =
+        httpAlertsEnabled &&
+        (forceAlert ||
+          reason !== 'finish' ||
+          durationMs >= slowMs ||
+          (statusCode != null && statusCode >= 500));
+
+      if (shouldAlert) {
+        notifyHttpRequestProblem({
+          method: req.method,
+          path: req.originalUrl || req.url,
+          statusCode,
+          durationMs,
+          reason,
+          requestId,
+          session,
+          bodyPreview,
+        }).catch(() => {});
+      }
+    };
+
+    res.on('finish', () => record('finish'));
+    res.on('close', () => {
+      if (!res.writableEnded) record('client-aborted', true);
+    });
+    req.on('aborted', () => record('request-aborted', true));
+
     next();
   });
 

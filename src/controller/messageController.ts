@@ -50,6 +50,26 @@ async function returnSucess(res: any, data: any) {
   res.status(201).json({ status: 'success', response: data, mapper: 'return' });
 }
 
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string
+): Promise<T> {
+  let timer: NodeJS.Timeout;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${timeoutMs}ms`)),
+      timeoutMs
+    );
+  });
+
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer!);
+  }
+}
+
 export async function sendMessage(req: Request, res: Response) {
   /**
    * #swagger.tags = ["Messages"]
@@ -112,14 +132,25 @@ export async function sendMessage(req: Request, res: Response) {
   const { phone, message } = req.body;
 
   const options = req.body.options || {};
+  const sendTimeoutMs = parseInt(
+    process.env.WPP_SEND_MESSAGE_TIMEOUT_MS || '45000',
+    10
+  );
 
   try {
     const results: any = [];
     for (const contato of phone) {
-      results.push(await req.client.sendText(contato, message, options));
+      results.push(
+        await withTimeout(
+          req.client.sendText(contato, message, options),
+          sendTimeoutMs,
+          `sendText ${contato}`
+        )
+      );
     }
 
-    if (results.length === 0) res.status(400).json('Error sending message');
+    if (results.length === 0)
+      return res.status(400).json('Error sending message');
     req.io.emit('mensagem-enviada', results);
     returnSucess(res, results);
   } catch (error) {
