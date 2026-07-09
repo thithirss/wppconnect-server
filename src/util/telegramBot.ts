@@ -136,6 +136,8 @@ export class WppTelegramBot {
     if (c === '/status') return this.allStatus(msg.chat.id);
     if (c === '/logs')
       return this.sendLogs(msg.chat.id, parseInt(args[0] || '80', 10));
+    if (c === '/httplogs')
+      return this.sendHttpLogs(msg.chat.id, parseInt(args[0] || '80', 10));
     if (c === '/reconectar')
       return args[0]
         ? this.doReconnect(msg.chat.id, args[0])
@@ -282,7 +284,10 @@ export class WppTelegramBot {
             callback_data: 'confirm_reset:',
           },
         ],
-        [{ text: '📋 Ver logs recentes', callback_data: 'logs:' }],
+        [
+          { text: '📋 Logs (Geral)', callback_data: 'logs:' },
+          { text: '🌐 Logs (HTTP)', callback_data: 'httplogs:' }
+        ],
       ]
     );
   }

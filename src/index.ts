@@ -102,9 +102,11 @@ export function initServer(serverOptions: Partial<ServerOptions>): {
     next();
   });
 
-  // Log all HTTP requests
+  // Log all HTTP requests to dedicated buffer
   app.use((req, res, next) => {
-    logger.info(`[HTTP] ${req.method} ${req.url}`);
+    import('./util/logger').then(({ addHttpLog }) => {
+      addHttpLog(`[HTTP] ${req.method} ${req.url}`);
+    });
     next();
   });
 
