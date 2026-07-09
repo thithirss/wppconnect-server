@@ -17,6 +17,7 @@
 import { defaultLogger } from '@wppconnect-team/wppconnect';
 import cors from 'cors';
 import express, { Express, NextFunction, Router } from 'express';
+import fs from 'fs';
 import boolParser from 'express-query-boolean';
 import { createServer } from 'http';
 import mergeDeep from 'merge-deep';
@@ -43,6 +44,14 @@ import { clientsArray } from './util/sessionUtil';
 //require('dotenv').config();
 
 export const logger = createLogger(config.log);
+
+function ensureWritableDir(path: string, logger: Logger) {
+  fs.mkdirSync(path, { recursive: true });
+  const testFile = `${path.replace(/[\\/]$/, '')}/.write-test`;
+  fs.writeFileSync(testFile, 'ok');
+  fs.unlinkSync(testFile);
+  logger.info(`Writable directory ready: ${path}`);
+}
 
 export function initServer(serverOptions: Partial<ServerOptions>): {
   app: Express;
@@ -134,6 +143,19 @@ export function initServer(serverOptions: Partial<ServerOptions>): {
       `\x1b[31m Visit ${serverOptions.host}:${PORT}/api-docs for Swagger docs`
     );
     logger.info(`WPPConnect-Server version: ${version}`);
+
+    try {
+      ensureWritableDir(process.env.WPP_TOKENS_DIR || './tokens', logger);
+      ensureWritableDir(
+        serverOptions.customUserDataDir || './userDataDir/',
+        logger
+      );
+    } catch (e) {
+      logger.error(
+        'Runtime storage is not writable. Check Railway volume mount path and permissions.',
+        e
+      );
+    }
 
     if (serverOptions.startAllSession) startAllSessions(serverOptions, logger);
 

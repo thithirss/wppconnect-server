@@ -149,9 +149,11 @@ export default class CreateSessionUtil {
                   client,
                   statusFind
                 );
+                const sessionWasConnected = client.status === 'CONNECTED';
                 if (
-                  statusFind === StatusFind.autocloseCalled ||
-                  statusFind === StatusFind.disconnectedMobile
+                  sessionWasConnected &&
+                  (statusFind === StatusFind.autocloseCalled ||
+                    statusFind === StatusFind.disconnectedMobile)
                 ) {
                   client.status = 'CLOSED';
                   client.qrcode = null;
@@ -175,6 +177,10 @@ export default class CreateSessionUtil {
                     req.logger,
                     recentLogs,
                     reconnectFn
+                  );
+                } else if (statusFind === StatusFind.disconnectedMobile) {
+                  req.logger.warn(
+                    `[${session}] disconnectedMobile recebido antes da sessao conectar. Mantendo fluxo de login sem auto-reconnect.`
                   );
                 }
                 callWebHook(client, req, 'status-find', {
@@ -306,7 +312,7 @@ export default class CreateSessionUtil {
     req: Request,
     client: WhatsAppServer
   ): Promise<boolean> {
-    const retries = parseInt(process.env.WPP_CONNECT_CHECK_RETRIES || '12', 10);
+    const retries = parseInt(process.env.WPP_CONNECT_CHECK_RETRIES || '36', 10);
     const delayMs = parseInt(
       process.env.WPP_CONNECT_CHECK_DELAY_MS || '5000',
       10

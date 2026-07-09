@@ -33,6 +33,7 @@ ENV NODE_ENV=production \
     SHARP_FORCE_GLOBAL_LIBVIPS=true \
     WPP_LOG_TO_FILE=false \
     WPP_LOG_LEVEL=info \
+    WPP_START_ALL_SESSION=false \
     WPP_CUSTOM_USER_DATA_DIR=/data/userDataDir/ \
     WPP_TOKENS_DIR=/data/tokens
 
@@ -55,9 +56,7 @@ COPY --from=build /usr/src/wpp-server/dist ./dist
 RUN mkdir -p /data/userDataDir /data/tokens /usr/src/wpp-server/log \
     && ln -s /data/tokens /usr/src/wpp-server/tokens \
     && ln -s /data/userDataDir /usr/src/wpp-server/userDataDir \
-    && chown -R node:node /usr/src/wpp-server /data
-
-USER node
+    && chown -R root:root /usr/src/wpp-server /data
 
 EXPOSE 21465
 ENTRYPOINT ["dumb-init", "--"]
