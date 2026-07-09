@@ -15,6 +15,8 @@
  */
 import { create, SocketState, StatusFind } from '@wppconnect-team/wppconnect';
 import { Request } from 'express';
+import fs from 'fs';
+import path from 'path';
 
 import { download } from '../controller/sessionController';
 import { WhatsAppServer } from '../types/WhatsAppServer';
@@ -62,10 +64,24 @@ export default class CreateSessionUtil {
 
       this.startChatWootClient(client);
 
+      let sessionUserDataDir = '';
       if (req.serverOptions.customUserDataDir) {
+        sessionUserDataDir = req.serverOptions.customUserDataDir + session;
         req.serverOptions.createOptions.puppeteerOptions = {
-          userDataDir: req.serverOptions.customUserDataDir + session,
+          userDataDir: sessionUserDataDir,
         };
+      } else {
+        sessionUserDataDir = path.join(process.cwd(), 'userDataDir', session);
+      }
+
+      const lockFile = path.join(sessionUserDataDir, 'SingletonLock');
+      try {
+        if (fs.existsSync(lockFile)) {
+          fs.unlinkSync(lockFile);
+          req.logger.info(`[${session}] Cleared orphaned SingletonLock file.`);
+        }
+      } catch (e) {
+        req.logger.warn(`[${session}] Failed to clear SingletonLock file:`, e);
       }
 
       const wppClient = await create(
@@ -83,6 +99,7 @@ export default class CreateSessionUtil {
             : {},
           req.serverOptions.createOptions,
           {
+            autoClose: 0,
             session: session,
             phoneNumber: client.config.phone ?? null,
             deviceName:

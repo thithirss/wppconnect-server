@@ -38,6 +38,7 @@ import { createLogger } from './util/logger';
 import { setServerContext } from './util/serverContext';
 import { startTelegramBot } from './util/telegramBot';
 import { notifyServerStarted } from './util/telegramNotifier';
+import { clientsArray } from './util/sessionUtil';
 
 //require('dotenv').config();
 
@@ -144,6 +145,31 @@ please set the log to 'silly', copy the log that shows the error and open your i
 ======================================================
 `);
   }
+
+  const gracefulShutdown = async (signal: string) => {
+    logger.info(`Received ${signal}. Shutting down gracefully...`);
+    try {
+      const activeSessions = Object.keys(clientsArray).filter(
+        (key) => clientsArray[key as any] !== undefined
+      );
+
+      for (const session of activeSessions) {
+        const client = clientsArray[session as any];
+        if (client && client.status !== 'CLOSED') {
+          logger.info(`Closing session ${session} before shutdown...`);
+          await client.close();
+        }
+      }
+      logger.info('All sessions closed. Exiting process.');
+      process.exit(0);
+    } catch (e) {
+      logger.error('Error during graceful shutdown:', e);
+      process.exit(1);
+    }
+  };
+
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
   return {
     app,
