@@ -34,7 +34,7 @@ import {
   setMaxListners,
   startAllSessions,
 } from './util/functions';
-import { createLogger } from './util/logger';
+import { createLogger, addHttpLog } from './util/logger';
 import { setServerContext } from './util/serverContext';
 import { startTelegramBot } from './util/telegramBot';
 import { notifyServerStarted } from './util/telegramNotifier';
@@ -102,11 +102,9 @@ export function initServer(serverOptions: Partial<ServerOptions>): {
     next();
   });
 
-  // Log all HTTP requests to dedicated buffer
+  // Log all HTTP requests to separate buffer
   app.use((req, res, next) => {
-    import('./util/logger').then(({ addHttpLog }) => {
-      addHttpLog(`[HTTP] ${req.method} ${req.url}`);
-    });
+    addHttpLog(`${req.method} ${req.url}`);
     next();
   });
 

@@ -21,21 +21,6 @@ import winston from 'winston';
 const LOG_BUFFER_SIZE = 200;
 const logBuffer: string[] = [];
 
-// ─── HTTP Log Buffer ────────────────────────────────────────────────────────
-const httpLogBuffer: string[] = [];
-
-export function addHttpLog(line: string) {
-  const timestamp = new Date().toISOString();
-  httpLogBuffer.push(`[${timestamp}] ${line}`);
-  if (httpLogBuffer.length > LOG_BUFFER_SIZE) {
-    httpLogBuffer.shift();
-  }
-}
-
-export function getRecentHttpLogs(count = 50): string[] {
-  return httpLogBuffer.slice(-count);
-}
-
 class MemoryRingBufferTransport extends Transport {
   constructor(opts?: Transport.TransportStreamOptions) {
     super(opts);
@@ -64,6 +49,21 @@ class MemoryRingBufferTransport extends Transport {
  */
 export function getRecentLogs(count = 50): string[] {
   return logBuffer.slice(-count);
+}
+
+// ─── Separate HTTP Log Buffer ────────────────────────────────────────────────
+const httpLogBuffer: string[] = [];
+
+export function addHttpLog(line: string) {
+  const timestamp = new Date().toISOString();
+  httpLogBuffer.push(`[${timestamp}] ${line}`);
+  if (httpLogBuffer.length > LOG_BUFFER_SIZE) {
+    httpLogBuffer.shift();
+  }
+}
+
+export function getRecentHttpLogs(count = 50): string[] {
+  return httpLogBuffer.slice(-count);
 }
 
 // Use JSON logging for log files

@@ -136,7 +136,7 @@ export class WppTelegramBot {
     if (c === '/status') return this.allStatus(msg.chat.id);
     if (c === '/logs')
       return this.sendLogs(msg.chat.id, parseInt(args[0] || '80', 10));
-    if (c === '/httplogs')
+    if (c === '/httplogs' || c === '/http')
       return this.sendHttpLogs(msg.chat.id, parseInt(args[0] || '80', 10));
     if (c === '/reconectar')
       return args[0]
@@ -236,6 +236,7 @@ export class WppTelegramBot {
     if (action === 'phone')
       return this.promptPhone(cb.message.chat.id, session || 'central');
     if (action === 'logs') return this.sendLogs(cb.message.chat.id, 80);
+    if (action === 'httplogs') return this.sendHttpLogs(cb.message.chat.id, 80);
     if (action === 'confirm_reset')
       return this.doNuclearReset(cb.message.chat.id);
   }
@@ -285,8 +286,8 @@ export class WppTelegramBot {
           },
         ],
         [
-          { text: '📋 Logs (Geral)', callback_data: 'logs:' },
-          { text: '🌐 Logs (HTTP)', callback_data: 'httplogs:' }
+          { text: '📋 Ver logs', callback_data: 'logs:' },
+          { text: '🌐 Ver logs HTTP', callback_data: 'httplogs:' },
         ],
       ]
     );
@@ -372,6 +373,29 @@ export class WppTelegramBot {
         ],
       ]
     );
+  }
+
+  private async sendHttpLogs(chatId: number, count: number) {
+    // Requires importing getRecentHttpLogs from logger
+    const { getRecentHttpLogs } = require('./logger');
+    const logs = getRecentHttpLogs(Math.min(count, 200));
+    if (!logs.length) return this.send(chatId, '📭 Nenhum log HTTP disponível.');
+    const content = logs.join('\n');
+    if (content.length < 3500) {
+      await this.send(
+        chatId,
+        `🌐 <b>Últimos ${logs.length} logs HTTP:</b>\n<pre>${esc(
+          content.slice(-3000)
+        )}</pre>`
+      );
+    } else {
+      await this.doc(
+        chatId,
+        Buffer.from(content),
+        `http_logs_${Date.now()}.txt`,
+        `🌐 <b>${logs.length} logs HTTP</b>`
+      );
+    }
   }
 
   private async sendLogs(chatId: number, count: number) {
