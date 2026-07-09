@@ -189,7 +189,8 @@ export default class CreateSessionUtil {
       );
 
       client = clientsArray[session] = Object.assign(wppClient, client);
-      await this.start(req, client);
+      const isReady = await this.start(req, client);
+      if (!isReady) return;
 
       if (req.serverOptions.webhook.onParticipantsChanged) {
         await this.onParticipantsChanged(req, client);
@@ -301,9 +302,51 @@ export default class CreateSessionUtil {
     });
   }
 
-  async start(req: Request, client: WhatsAppServer) {
+  private async waitForConnected(
+    req: Request,
+    client: WhatsAppServer
+  ): Promise<boolean> {
+    const retries = parseInt(process.env.WPP_CONNECT_CHECK_RETRIES || '12', 10);
+    const delayMs = parseInt(
+      process.env.WPP_CONNECT_CHECK_DELAY_MS || '5000',
+      10
+    );
+
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        if (await client.isConnected()) return true;
+      } catch (error: any) {
+        const message = error?.message || String(error);
+        if (message.includes('WAPI is not defined')) {
+          req.logger.warn(
+            `[${client.session}] WhatsApp Web ainda nao esta pronto (WAPI indisponivel). Tentativa ${attempt}/${retries}.`
+          );
+        } else {
+          req.logger.warn(
+            `[${client.session}] Falha ao checar conexao. Tentativa ${attempt}/${retries}:`,
+            error
+          );
+        }
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+
+    return false;
+  }
+
+  async start(req: Request, client: WhatsAppServer): Promise<boolean> {
+    await this.checkStateSession(client, req);
+
     try {
-      await client.isConnected();
+      const isConnected = await this.waitForConnected(req, client);
+      if (!isConnected) {
+        req.logger.warn(
+          `[${client.session}] Sessao ainda nao conectada. Aguardando QR Code/login antes de registrar listeners.`
+        );
+        return false;
+      }
+
       Object.assign(client, { status: 'CONNECTED', qrcode: null });
 
       req.logger.info(`Started Session: ${client.session}`);
@@ -322,9 +365,9 @@ export default class CreateSessionUtil {
     } catch (error) {
       req.logger.error(error);
       req.io.emit('session-error', client.session);
+      return false;
     }
 
-    await this.checkStateSession(client, req);
     await this.listenMessages(client, req);
 
     if (req.serverOptions.webhook.listenAcks) {
@@ -334,6 +377,8 @@ export default class CreateSessionUtil {
     if (req.serverOptions.webhook.onPresenceChanged) {
       await this.onPresenceChanged(client, req);
     }
+
+    return true;
   }
 
   async checkStateSession(client: WhatsAppServer, req: Request) {
