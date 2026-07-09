@@ -607,6 +607,9 @@ export class WppTelegramBot {
         [{ text: '📊 Ver status', callback_data: 'status:' }],
       ]
     );
+
+    // Automatically restart the central session so the QR code logic triggers
+    await this.doStart(chatId, 'central');
   }
 
   private async doQR(chatId: number, session: string) {
