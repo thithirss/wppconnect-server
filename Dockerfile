@@ -47,7 +47,8 @@ RUN apk add --no-cache \
     fftw
 
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev --legacy-peer-deps \
+COPY --from=deps /usr/src/wpp-server/node_modules ./node_modules
+RUN npm prune --omit=dev --legacy-peer-deps \
     && npm cache clean --force
 
 COPY --from=build /usr/src/wpp-server/dist ./dist
