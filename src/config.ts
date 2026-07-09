@@ -82,6 +82,16 @@ export default {
     linkPreviewApiServers: null,
 
     /**
+     * Disable waiting for complete login (bypasses syncing wait)
+     */
+    waitForLogin: false,
+
+    /**
+     * Disable welcome message to speed up initialization
+     */
+    disableWelcome: true,
+
+    /**
      * Set specific whatsapp version
      */
     // whatsappVersion: '2.xxxxx',
