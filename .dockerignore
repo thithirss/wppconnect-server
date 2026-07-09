@@ -1,9 +1,15 @@
 .git
 .github
-.hust
+.husky
+.vscode
+.env
+.env.*
 *.tgz
+coverage
 dist
 log
 node_modules
 npm-debug.log
 tokens
+userDataDir
+wppconnect_tokens

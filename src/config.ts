@@ -1,36 +1,54 @@
 import { ServerOptions } from './types/ServerOptions';
 
+const envBool = (name: string, fallback: boolean): boolean => {
+  const value = process.env[name];
+  if (value == null || value === '') return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
+};
+
+const envList = (name: string, fallback: string[]): string[] => {
+  const value = process.env[name];
+  if (!value) return fallback;
+  return value
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+};
+
 // Telegram and monitor config are read from env vars at runtime.
 // See src/util/telegramNotifier.ts and src/util/sessionMonitor.ts.
 export default {
   secretKey: 'batatafritacomqueijo',
-  host: 'http://localhost',
-  port: '21465',
-  deviceName: 'WppConnect',
-  poweredBy: 'WPPConnect-Server',
-  startAllSession: true,
-  tokenStoreType: 'file',
-  maxListeners: 15,
-  customUserDataDir: './userDataDir/',
+  host:
+    process.env.WPP_HOST ||
+    process.env.RAILWAY_PUBLIC_DOMAIN?.replace(/^/, 'https://') ||
+    'http://localhost',
+  port: parseInt(process.env.PORT || process.env.WPP_PORT || '21465', 10),
+  deviceName: process.env.WPP_DEVICE_NAME || 'WppConnect',
+  poweredBy: process.env.WPP_POWERED_BY || 'WPPConnect-Server',
+  startAllSession: envBool('WPP_START_ALL_SESSION', true),
+  tokenStoreType: process.env.WPP_TOKEN_STORE_TYPE || 'file',
+  maxListeners: parseInt(process.env.WPP_MAX_LISTENERS || '15', 10),
+  customUserDataDir: process.env.WPP_CUSTOM_USER_DATA_DIR || './userDataDir/',
   webhook: {
-    url: null,
-    autoDownload: true,
-    uploadS3: false,
-    readMessage: true,
-    allUnreadOnStart: false,
-    listenAcks: true,
-    onPresenceChanged: true,
-    onParticipantsChanged: true,
-    onReactionMessage: true,
-    onPollResponse: true,
-    onRevokedMessage: true,
-    onLabelUpdated: true,
-    onSelfMessage: false,
-    ignore: ['status@broadcast'],
+    url: process.env.WPP_WEBHOOK_URL || null,
+    autoDownload: envBool('WPP_WEBHOOK_AUTO_DOWNLOAD', true),
+    uploadS3: envBool('WPP_WEBHOOK_UPLOAD_S3', false),
+    readMessage: envBool('WPP_WEBHOOK_READ_MESSAGE', true),
+    allUnreadOnStart: envBool('WPP_WEBHOOK_ALL_UNREAD_ON_START', false),
+    listenAcks: envBool('WPP_WEBHOOK_LISTEN_ACKS', true),
+    onPresenceChanged: envBool('WPP_WEBHOOK_ON_PRESENCE_CHANGED', true),
+    onParticipantsChanged: envBool('WPP_WEBHOOK_ON_PARTICIPANTS_CHANGED', true),
+    onReactionMessage: envBool('WPP_WEBHOOK_ON_REACTION_MESSAGE', true),
+    onPollResponse: envBool('WPP_WEBHOOK_ON_POLL_RESPONSE', true),
+    onRevokedMessage: envBool('WPP_WEBHOOK_ON_REVOKED_MESSAGE', true),
+    onLabelUpdated: envBool('WPP_WEBHOOK_ON_LABEL_UPDATED', true),
+    onSelfMessage: envBool('WPP_WEBHOOK_ON_SELF_MESSAGE', false),
+    ignore: envList('WPP_WEBHOOK_IGNORE', ['status@broadcast']),
   },
   websocket: {
-    autoDownload: false,
-    uploadS3: false,
+    autoDownload: envBool('WPP_WEBSOCKET_AUTO_DOWNLOAD', false),
+    uploadS3: envBool('WPP_WEBSOCKET_UPLOAD_S3', false),
   },
   chatwoot: {
     sendQrCode: true,
@@ -42,14 +60,19 @@ export default {
     daysToArchive: 45,
   },
   log: {
-    level: 'silly', // Before open a issue, change level to silly and retry a action
-    logger: ['console', 'file'],
+    level: process.env.WPP_LOG_LEVEL || 'silly',
+    logger: envList('WPP_LOGGER', [
+      'console',
+      ...(envBool('WPP_LOG_TO_FILE', true) ? ['file'] : []),
+    ]),
   },
   createOptions: {
+    puppeteerOptions: {
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+    },
     browserArgs: [
       '--disable-web-security',
       '--no-sandbox',
-      '--disable-web-security',
       '--aggressive-cache-discard',
       '--disable-cache',
       '--disable-application-cache',

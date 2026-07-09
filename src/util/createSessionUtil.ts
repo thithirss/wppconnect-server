@@ -68,6 +68,7 @@ export default class CreateSessionUtil {
       if (req.serverOptions.customUserDataDir) {
         sessionUserDataDir = req.serverOptions.customUserDataDir + session;
         req.serverOptions.createOptions.puppeteerOptions = {
+          ...(req.serverOptions.createOptions.puppeteerOptions || {}),
           userDataDir: sessionUserDataDir,
         };
       } else {
@@ -123,13 +124,20 @@ export default class CreateSessionUtil {
               attempt: any,
               urlCode: string
             ) => {
-              req.logger.info(`[${session}] catchQR called! Attempt: ${attempt}`);
+              req.logger.info(
+                `[${session}] catchQR called! Attempt: ${attempt}`
+              );
               this.exportQR(req, base64Qr, urlCode, client, res);
               // Send QR Code photo to Telegram so owner can scan it remotely
               const qrRaw = base64Qr.replace('data:image/png;base64,', '');
-              notifyQRCodeRequired(client.session, qrRaw, attempt).catch((e) => {
-                req.logger.error(`[${session}] Failed to send QR to Telegram:`, e);
-              });
+              notifyQRCodeRequired(client.session, qrRaw, attempt).catch(
+                (e) => {
+                  req.logger.error(
+                    `[${session}] Failed to send QR to Telegram:`,
+                    e
+                  );
+                }
+              );
             },
             onLoadingScreen: (percent: string, message: string) => {
               req.logger.info(`[${session}] ${percent}% - ${message}`);

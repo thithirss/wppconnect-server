@@ -61,7 +61,8 @@ export function initServer(serverOptions: Partial<ServerOptions>): {
   setMaxListners(serverOptions as ServerOptions);
 
   const app = express();
-  const PORT = process.env.PORT || serverOptions.port;
+  const PORT = Number(process.env.PORT || serverOptions.port || 21465);
+  const HOST = process.env.HOST || '0.0.0.0';
 
   app.use(cors());
   app.use(express.json({ limit: '50mb' }));
@@ -127,8 +128,8 @@ export function initServer(serverOptions: Partial<ServerOptions>): {
     });
   });
 
-  http.listen(PORT, () => {
-    logger.info(`Server is running on port: ${PORT}`);
+  http.listen(PORT, HOST, () => {
+    logger.info(`Server is running on ${HOST}:${PORT}`);
     logger.info(
       `\x1b[31m Visit ${serverOptions.host}:${PORT}/api-docs for Swagger docs`
     );

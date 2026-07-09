@@ -239,8 +239,9 @@ export async function autoDownload(client: any, req: any, message: any) {
 
 export async function startAllSessions(config: any, logger: any) {
   try {
+    const port = process.env.PORT || config.port || 21465;
     await api.post(
-      `${config.host}:${config.port}/api/${config.secretKey}/start-all`
+      `http://127.0.0.1:${port}/api/${config.secretKey}/start-all`
     );
   } catch (e) {
     logger.error(e);
