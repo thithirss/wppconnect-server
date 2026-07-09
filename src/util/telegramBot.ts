@@ -403,6 +403,13 @@ export class WppTelegramBot {
 
   private async doStart(chatId: number, session: string) {
     await this.send(chatId, `▶️ Iniciando sessão <code>${session}</code>...`);
+    const existing = (clientsArray as any)[session] as any;
+    if (existing) {
+      try {
+        await existing.close();
+      } catch (_) {}
+      (clientsArray as any)[session] = undefined;
+    }
     const util = new CreateSessionUtil();
     util.opendata(this.fakeReq(), session).catch((e) => {
       this.send(
@@ -423,9 +430,9 @@ export class WppTelegramBot {
       const cl = (clientsArray as any)[session] as any;
       if (cl) {
         try {
-          cl.status = 'CLOSED';
-          (clientsArray as any)[session] = undefined;
+          await cl.close();
         } catch (_) {}
+        (clientsArray as any)[session] = undefined;
       }
       await util.opendata(this.fakeReq(), session);
     };
@@ -725,9 +732,9 @@ export class WppTelegramBot {
     const existing = (clientsArray as any)[session] as any;
     if (existing) {
       try {
-        existing.status = 'CLOSED';
-        (clientsArray as any)[session] = undefined;
+        await existing.close();
       } catch (_) {}
+      (clientsArray as any)[session] = undefined;
     }
 
     // Override autoClose to 0 (disabled) for phone login
