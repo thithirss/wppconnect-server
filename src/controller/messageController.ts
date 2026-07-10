@@ -42,7 +42,7 @@ function returnError(req: Request, res: Response, error: any) {
   res.status(500).json({
     status: 'Error',
     message: 'Erro ao enviar a mensagem.',
-    error: error,
+    error: errMsg,
   });
 }
 
@@ -67,6 +67,35 @@ async function withTimeout<T>(
     return await Promise.race([promise, timeout]);
   } finally {
     clearTimeout(timer!);
+  }
+}
+
+async function sendTextResolvingRecipient(
+  req: Request,
+  contact: string,
+  message: string,
+  options: any
+): Promise<any> {
+  try {
+    return await req.client.sendText(contact, message, options);
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : String(error || '');
+
+    // Recent WhatsApp Web versions may require the privacy-preserving LID
+    // instead of the legacy @c.us JID. Resolve it lazily only when necessary,
+    // keeping the common send path fast.
+    if (!errorMessage.includes('No LID for user')) throw error;
+
+    req.logger.info(
+      `[sendMessage] Resolving current WhatsApp identifier for ${contact}.`
+    );
+    const profile: any = await req.client.checkNumberStatus(contact);
+    const resolvedContact = profile?.id?._serialized;
+    if (!profile?.numberExists || !resolvedContact) throw error;
+
+    req.logger.info(`[sendMessage] Retrying ${contact} as ${resolvedContact}.`);
+    return req.client.sendText(resolvedContact, message, options);
   }
 }
 
@@ -142,7 +171,7 @@ export async function sendMessage(req: Request, res: Response) {
     for (const contato of phone) {
       results.push(
         await withTimeout(
-          req.client.sendText(contato, message, options),
+          sendTextResolvingRecipient(req, contato, message, options),
           sendTimeoutMs,
           `sendText ${contato}`
         )

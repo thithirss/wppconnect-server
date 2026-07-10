@@ -8,6 +8,7 @@ import config from '../config';
 import { ServerOptions } from '../types/ServerOptions';
 import { getRecentHttpLogs, getRecentLogs } from './logger';
 import {
+  cleanupSession,
   forceReconnect,
   getAllMonitorStates,
   getMonitorState,
@@ -77,6 +78,10 @@ export class WppTelegramBot {
       { command: 'logs', description: '📋 Ver logs — /logs [N]' },
       { command: 'ajuda', description: '❓ Ajuda' },
     ];
+    commands.splice(commands.length - 1, 0, {
+      command: 'wipevolume',
+      description: 'WIPE completo do volume persistente',
+    });
     commands.splice(
       commands.length - 1,
       0,
@@ -185,6 +190,7 @@ export class WppTelegramBot {
         ? this.doPhoneLogin(msg.chat.id, args[0], args[1])
         : this.promptPhone(msg.chat.id, 'central');
     if (c === '/resetar') return this.confirmReset(msg.chat.id);
+    if (c === '/wipevolume') return this.confirmVolumeWipe(msg.chat.id);
     return this.help(msg.chat.id);
   }
 
@@ -249,6 +255,8 @@ export class WppTelegramBot {
     if (action === 'httplogs') return this.sendHttpLogs(cb.message.chat.id, 80);
     if (action === 'confirm_reset')
       return this.doNuclearReset(cb.message.chat.id);
+    if (action === 'confirm_wipe_volume')
+      return this.doVolumeWipe(cb.message.chat.id);
   }
 
   // ── Commands ──────────────────────────────────────────────────────────────
@@ -588,6 +596,97 @@ export class WppTelegramBot {
         [{ text: '❌ Cancelar', callback_data: 'status:' }],
       ]
     );
+  }
+
+  private async confirmVolumeWipe(chatId: number) {
+    const volumePath = path.resolve(
+      process.env.RAILWAY_VOLUME_MOUNT_PATH || '/data'
+    );
+    await this.kb(
+      chatId,
+      `<b>WIPE DO VOLUME</b>\n\n` +
+        `Todo o conteudo persistente de <code>${esc(
+          volumePath
+        )}</code> sera apagado.\n` +
+        `Tokens, perfis e sessoes nao poderao ser recuperados.\n\n` +
+        `O ponto de montagem sera preservado e as pastas necessarias serao recriadas.`,
+      [
+        [
+          {
+            text: 'Confirmar WIPE do volume',
+            callback_data: 'confirm_wipe_volume:',
+          },
+        ],
+        [{ text: 'Cancelar', callback_data: 'status:' }],
+      ]
+    );
+  }
+
+  private async doVolumeWipe(chatId: number) {
+    const configuredPath = process.env.RAILWAY_VOLUME_MOUNT_PATH || '/data';
+    const volumePath = path.resolve(configuredPath);
+    const filesystemRoot = path.parse(volumePath).root;
+
+    if (
+      !path.isAbsolute(configuredPath) ||
+      volumePath === filesystemRoot ||
+      volumePath === path.resolve(process.cwd()) ||
+      volumePath.length < 5 ||
+      (!process.env.RAILWAY_VOLUME_MOUNT_PATH && volumePath !== '/data')
+    ) {
+      this.log.error(`[Bot] Refused unsafe volume wipe path: ${volumePath}`);
+      return this.send(
+        chatId,
+        `Wipe recusado: caminho de volume inseguro <code>${esc(
+          volumePath
+        )}</code>.`
+      );
+    }
+
+    await this.send(
+      chatId,
+      `<b>Wipe iniciado</b> em <code>${esc(volumePath)}</code>...`
+    );
+
+    try {
+      for (const session of Object.keys(clientsArray)) {
+        const client = (clientsArray as any)[session] as any;
+        if (client && typeof client.close === 'function') {
+          try {
+            await Promise.race([
+              Promise.resolve(client.close()),
+              new Promise((resolve) => setTimeout(resolve, 5000)),
+            ]);
+          } catch (_) {}
+        }
+        (clientsArray as any)[session] = undefined;
+        cleanupSession(session);
+      }
+
+      fs.mkdirSync(volumePath, { recursive: true });
+      for (const entry of fs.readdirSync(volumePath)) {
+        fs.rmSync(path.join(volumePath, entry), {
+          recursive: true,
+          force: true,
+        });
+      }
+
+      fs.mkdirSync(path.join(volumePath, 'tokens'), { recursive: true });
+      fs.mkdirSync(path.join(volumePath, 'userDataDir'), { recursive: true });
+      this.log.warn(`[Bot] Persistent volume wiped: ${volumePath}`);
+
+      await this.send(
+        chatId,
+        `<b>Volume limpo com sucesso.</b> A sessao central sera iniciada para um novo login.`
+      );
+      await this.doStart(chatId, 'central');
+    } catch (error: any) {
+      this.log.error('[Bot] Volume wipe failed:', error);
+      await this.send(
+        chatId,
+        `Erro no wipe: <code>${esc(String(error?.message || error))}</code>`
+      );
+    }
   }
 
   /** Closes all sessions, deletes all tokens and userDataDir. No redeploy needed. */
