@@ -19,6 +19,9 @@ import { Request, Response } from 'express';
 import { notifyMessageFailed } from '../util/telegramNotifier';
 import { unlinkAsync } from '../util/functions';
 
+const recipientLidCache = new Map<string, { lid: string; expiresAt: number }>();
+const RECIPIENT_LID_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
 function returnError(req: Request, res: Response, error: any) {
   req.logger.error(error);
 
@@ -76,6 +79,25 @@ async function sendTextResolvingRecipient(
   message: string,
   options: any
 ): Promise<any> {
+  const session = (req.client as any)?.session || 'default';
+  const phone = contact.split('@')[0];
+  const cacheKey = `${session}:${phone}`;
+  const cached = recipientLidCache.get(cacheKey);
+
+  if (cached && cached.expiresAt > Date.now()) {
+    req.logger.debug(`[sendMessage] Using cached LID for ${contact}.`);
+    try {
+      return await req.client.sendText(cached.lid, message, options);
+    } catch (error) {
+      const cachedError =
+        error instanceof Error ? error.message : String(error || '');
+      if (!cachedError.includes('No LID for user')) throw error;
+      recipientLidCache.delete(cacheKey);
+    }
+  } else if (cached) {
+    recipientLidCache.delete(cacheKey);
+  }
+
   try {
     return await req.client.sendText(contact, message, options);
   } catch (error) {
@@ -90,9 +112,34 @@ async function sendTextResolvingRecipient(
     req.logger.info(
       `[sendMessage] Resolving current WhatsApp identifier for ${contact}.`
     );
-    const profile: any = await req.client.checkNumberStatus(contact);
-    const resolvedContact = profile?.id?._serialized;
-    if (!profile?.numberExists || !resolvedContact) throw error;
+    let resolvedContact: string | undefined;
+
+    try {
+      const mapping: any = await (req.client as any).getPnLidEntry(contact);
+      resolvedContact = mapping?.lid?._serialized;
+    } catch (mappingError) {
+      req.logger.debug(
+        `[sendMessage] Direct PN/LID lookup failed for ${contact}: ${String(
+          mappingError
+        )}`
+      );
+    }
+
+    if (!resolvedContact) {
+      const profile: any = await req.client.checkNumberStatus(contact);
+      const profileId = profile?.id?._serialized;
+      if (profile?.numberExists && profileId?.endsWith('@lid')) {
+        resolvedContact = profileId;
+      }
+    }
+
+    // Retrying the same @c.us value can never fix "No LID for user".
+    if (!resolvedContact?.endsWith('@lid')) throw error;
+
+    recipientLidCache.set(cacheKey, {
+      lid: resolvedContact,
+      expiresAt: Date.now() + RECIPIENT_LID_CACHE_TTL_MS,
+    });
 
     req.logger.info(`[sendMessage] Retrying ${contact} as ${resolvedContact}.`);
     return req.client.sendText(resolvedContact, message, options);
