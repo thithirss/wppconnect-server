@@ -455,7 +455,25 @@ export default class CreateSessionUtil {
         client,
         req.serverOptions,
         req.logger,
-        false
+        false,
+        async () => {
+          req.logger.info(
+            `[SessionMonitor] Recycling unresponsive session: ${client.session}`
+          );
+          try {
+            await Promise.race([
+              Promise.resolve(client.close()),
+              new Promise((resolve) => setTimeout(resolve, 5000)),
+            ]);
+          } catch (error) {
+            req.logger.warn(
+              `[SessionMonitor] Error closing stale session ${client.session}:`,
+              error
+            );
+          }
+          clientsArray[client.session] = undefined;
+          await this.createSessionUtil(req, clientsArray, client.session);
+        }
       );
     } catch (error) {
       req.logger.error(error);

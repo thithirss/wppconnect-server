@@ -69,15 +69,17 @@ export default {
   createOptions: {
     puppeteerOptions: {
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+      // CDP calls can take longer on constrained Railway containers. This is
+      // deliberately higher than the HTTP send timeout; the watchdog handles
+      // an actually wedged page and recycles the session.
+      protocolTimeout: parseInt(
+        process.env.WPP_PUPPETEER_PROTOCOL_TIMEOUT_MS || '120000',
+        10
+      ),
     },
     browserArgs: [
       '--disable-web-security',
       '--no-sandbox',
-      '--aggressive-cache-discard',
-      '--disable-cache',
-      '--disable-application-cache',
-      '--disable-offline-load-stale-cache',
-      '--disk-cache-size=0',
       '--disable-background-networking',
       '--disable-default-apps',
       '--disable-extensions',

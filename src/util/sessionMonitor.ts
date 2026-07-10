@@ -41,6 +41,9 @@ export interface SessionMonitorState {
 const monitorStates = new Map<string, SessionMonitorState>();
 const watchdogTimers = new Map<string, NodeJS.Timeout>();
 const reconnectTimers = new Map<string, NodeJS.Timeout>();
+const reconnectCallbacks = new Map<string, () => Promise<void>>();
+const watchdogFailures = new Map<string, number>();
+const watchdogPingsInFlight = new Set<string>();
 
 const DEFAULT_PING_INTERVAL_MS = parseInt(
   process.env.MONITOR_PING_INTERVAL_MS || '120000',
@@ -55,6 +58,25 @@ const DEFAULT_RETRY_BACKOFF_MS = parseInt(
   10
 );
 const COOLDOWN_AFTER_MAX_RETRIES_MS = 10 * 60 * 1000; // 10 minutes
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`watchdog timed out after ${timeoutMs}ms`)),
+      timeoutMs
+    );
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
 
 /**
  * Calculates exponential backoff delay.
@@ -93,7 +115,8 @@ export function onSessionConnected(
   client: any,
   serverOptions: ServerOptions,
   logger: Logger,
-  isReconnect = false
+  isReconnect = false,
+  reconnectFn?: () => Promise<void>
 ): void {
   const state = getOrCreateState(session);
   const wasDisconnected = !state.isConnected || isReconnect;
@@ -103,6 +126,8 @@ export function onSessionConnected(
   state.retryCount = 0;
   state.isInCooldown = false;
   state.cooldownUntil = null;
+  watchdogFailures.set(session, 0);
+  if (reconnectFn) reconnectCallbacks.set(session, reconnectFn);
 
   // Cancel any pending reconnect timer
   if (reconnectTimers.has(session)) {
@@ -286,29 +311,69 @@ function startWatchdog(
       return;
     }
 
+    // setInterval does not wait for its async callback. Never stack CDP calls
+    // when Chromium is slow, as that makes a degraded page progressively worse.
+    if (watchdogPingsInFlight.has(session)) return;
+    watchdogPingsInFlight.add(session);
+
     try {
-      const isConnected = await client.isConnected();
+      const pingTimeoutMs = parseInt(
+        process.env.MONITOR_PING_TIMEOUT_MS || '20000',
+        10
+      );
+      const isConnected = await withTimeout(
+        client.isConnected(),
+        pingTimeoutMs
+      );
       if (!isConnected) {
         logger.warn(
           `[SessionMonitor] Watchdog detected ${session} is not connected. Triggering reconnect.`
         );
-        currentState.isConnected = false;
-        stopWatchdog(session);
-
-        // We don't have recentLogs or reconnectFn at this point, so we just flag it
-        if (isTelegramConfigured()) {
-          notifySessionDisconnected(
+        const reconnectFn = reconnectCallbacks.get(session);
+        client.status = 'CLOSED';
+        if (reconnectFn) {
+          onSessionDisconnected(
             session,
             'watchdog_detected',
-            currentState.retryCount + 1,
-            DEFAULT_MAX_RETRIES
-          ).catch(() => {});
+            serverOptions,
+            logger,
+            [],
+            reconnectFn
+          );
+        } else {
+          currentState.isConnected = false;
+          stopWatchdog(session);
         }
       } else {
+        watchdogFailures.set(session, 0);
         logger.debug(`[SessionMonitor] Watchdog: ${session} is alive.`);
       }
     } catch (e) {
       logger.warn(`[SessionMonitor] Watchdog ping failed for ${session}:`, e);
+      const failures = (watchdogFailures.get(session) || 0) + 1;
+      watchdogFailures.set(session, failures);
+      const failureThreshold = parseInt(
+        process.env.MONITOR_FAILURE_THRESHOLD || '2',
+        10
+      );
+      const reconnectFn = reconnectCallbacks.get(session);
+
+      if (failures >= failureThreshold && reconnectFn) {
+        logger.error(
+          `[SessionMonitor] ${session} failed ${failures} consecutive watchdog pings. Recycling the Chromium session.`
+        );
+        client.status = 'CLOSED';
+        onSessionDisconnected(
+          session,
+          'watchdog_timeout',
+          serverOptions,
+          logger,
+          [],
+          reconnectFn
+        );
+      }
+    } finally {
+      watchdogPingsInFlight.delete(session);
     }
   }, DEFAULT_PING_INTERVAL_MS);
 
@@ -330,6 +395,7 @@ function stopWatchdog(session: string): void {
   if (state) {
     state.watchdogActive = false;
   }
+  watchdogPingsInFlight.delete(session);
 }
 
 /**
@@ -386,4 +452,7 @@ export function cleanupSession(session: string): void {
   }
 
   monitorStates.delete(session);
+  reconnectCallbacks.delete(session);
+  watchdogFailures.delete(session);
+  watchdogPingsInFlight.delete(session);
 }
