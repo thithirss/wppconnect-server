@@ -282,9 +282,23 @@ export async function sendWithLidFallback(
       `checkNumberStatus ${contact}`
     );
 
-    if (profile?.numberExists && profile?.id?._serialized) {
-      validJid = profile.id._serialized;
-      logger.info(`[sendMessage] Sync complete. Valid JID is ${validJid}.`);
+    if (profile?.numberExists) {
+      // If checkNumberStatus returned a @c.us, it might have corrected the 9th digit.
+      // If it returned a @lid, we CANNOT send directly to @lid (WhatsApp server rejects with ack=-1).
+      // In that case, we stick to the original contact (@c.us), because checkNumberStatus
+      // already populated the internal IndexedDB store with the correct LID keys!
+      if (
+        profile.id &&
+        profile.id._serialized &&
+        !profile.id._serialized.endsWith('@lid')
+      ) {
+        validJid = profile.id._serialized;
+      } else {
+        validJid = contact;
+      }
+      logger.info(
+        `[sendMessage] Sync complete. Will retry sending to JID: ${validJid}`
+      );
     } else {
       throw new RecipientResolutionError(
         `WhatsApp checkNumberStatus indicates ${contact} does not exist on WhatsApp.`,
