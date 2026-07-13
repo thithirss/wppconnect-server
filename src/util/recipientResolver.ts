@@ -216,114 +216,18 @@ export function isLidRequiredError(error: unknown): boolean {
   return LID_ERROR_PATTERNS.some((pattern) => lower.includes(pattern));
 }
 
-// ── LID Resolution ───────────────────────────────────────────────────────────
+// ── LID Resolution & Send Fallback ───────────────────────────────────────────
 
 /**
- * Attempts to resolve a @c.us JID to its corresponding @lid identifier
- * using the wppconnect `getPnLidEntry` API.
- *
- * Returns the `@lid` serialized string, or null if no mapping exists.
- * Never fabricates a LID — only returns server-provided values.
- */
-export async function resolveRecipientLid(
-  client: WhatsAppClient,
-  contact: string,
-  logger: Logger,
-  timeoutMs = 10000
-): Promise<string | null> {
-  const phone = contact.split('@')[0];
-  const session = client.session || 'default';
-  const cacheKey = `${session}:${phone}`;
-
-  // Check cache first
-  const cached = getCachedLid(session, phone);
-  if (cached) {
-    logger.debug(`[sendMessage] Using cached LID for ${contact}.`);
-    return cached;
-  }
-
-  // Deduplicate concurrent resolutions for the same recipient
-  const existing = resolutionInFlight.get(cacheKey);
-  if (existing) {
-    logger.debug(
-      `[sendMessage] Waiting for in-flight LID resolution for ${contact}.`
-    );
-    return existing;
-  }
-
-  const resolution = (async (): Promise<string | null> => {
-    // Strategy 1: Direct PN↔LID lookup
-    try {
-      logger.info(`[sendMessage] Looking up PN/LID mapping for ${contact}.`);
-      const mapping = await withInternalTimeout(
-        client.getPnLidEntry(contact),
-        timeoutMs,
-        `getPnLidEntry ${contact}`
-      );
-
-      if (mapping?.lid?._serialized?.endsWith('@lid')) {
-        const lid = mapping.lid._serialized;
-        logger.info(`[sendMessage] LID mapping found for ${contact}.`);
-        setCachedLid(session, phone, lid);
-        return lid;
-      }
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      logger.debug(
-        `[sendMessage] Direct PN/LID lookup failed for ${contact}: ${msg}`
-      );
-    }
-
-    // Strategy 2: checkNumberStatus may return a LID-based id on newer accounts
-    try {
-      const profile = await withInternalTimeout(
-        client.checkNumberStatus(contact),
-        timeoutMs,
-        `checkNumberStatus ${contact}`
-      );
-
-      if (profile?.numberExists && profile?.id?._serialized?.endsWith('@lid')) {
-        const lid = profile.id._serialized;
-        logger.info(
-          `[sendMessage] LID found via checkNumberStatus for ${contact}.`
-        );
-        setCachedLid(session, phone, lid);
-        return lid;
-      }
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      logger.debug(
-        `[sendMessage] checkNumberStatus lookup failed for ${contact}: ${msg}`
-      );
-    }
-
-    logger.info(
-      `[sendMessage] No LID mapping available for ${contact}. Evaluating c.us fallback.`
-    );
-    return null;
-  })();
-
-  resolutionInFlight.set(cacheKey, resolution);
-  try {
-    return await resolution;
-  } finally {
-    resolutionInFlight.delete(cacheKey);
-  }
-}
-
-// ── Send with LID Fallback ───────────────────────────────────────────────────
-
-/**
- * Sends a text message with automatic LID fallback.
+ * Sends a text message with automatic LID/Crypto fallback.
  *
  * Flow:
- *  1. If the recipient already ends with @lid, send directly.
- *  2. Check if we have a cached LID → try that first.
- *  3. Otherwise, try sending with the @c.us JID.
- *  4. If the send fails with a "No LID" error:
- *     a. Resolve the PN↔LID mapping.
- *     b. If a LID is found, retry once with the @lid JID.
- *     c. If no LID is found, throw a clear error.
+ *  1. Try sending directly using the normalized @c.us JID.
+ *  2. If WhatsApp Web throws "No LID for user" or rejects it (ack=-1) due to missing
+ *     crypto keys/sync, we intercept the error.
+ *  3. We force a network sync by calling `checkNumberStatus`. This tells the WhatsApp
+ *     server to send the LID mapping and Signal keys to our local IndexedDB store.
+ *  4. We retry the send using the exact JID returned by `checkNumberStatus`.
  *  5. Never retry more than once.
  */
 export async function sendWithLidFallback(
@@ -334,41 +238,9 @@ export async function sendWithLidFallback(
   logger: Logger,
   assertResult?: (result: unknown, contact: string) => unknown
 ): Promise<SendResult> {
-  const session = client.session || 'default';
-  const phone = contact.split('@')[0];
   const doAssert = assertResult || ((r: unknown) => r);
 
-  // ── If already @lid, send directly ────────────────────────────────
-  if (contact.endsWith('@lid')) {
-    logger.info(`[sendMessage] Sending directly to LID recipient.`);
-    const result = doAssert(
-      await client.sendText(contact, message, options),
-      contact
-    );
-    return { result, usedRecipient: contact };
-  }
-
-  // ── Try cached LID first ──────────────────────────────────────────
-  const cachedLid = getCachedLid(session, phone);
-  if (cachedLid) {
-    logger.debug(`[sendMessage] Using cached LID for ${contact}.`);
-    try {
-      const result = doAssert(
-        await client.sendText(cachedLid, message, options),
-        cachedLid
-      );
-      return { result, usedRecipient: cachedLid };
-    } catch (error) {
-      clearCachedLid(session, phone);
-      if (!isLidRequiredError(error)) throw error;
-      // Cached LID is stale — fall through to fresh resolution
-      logger.info(
-        `[sendMessage] Cached LID is stale for ${contact}. Re-resolving.`
-      );
-    }
-  }
-
-  // ── Try sending with @c.us ────────────────────────────────────────
+  // ── Try sending natively first ────────────────────────────────────────
   try {
     logger.info(`[sendMessage] Normalized recipient: ${contact}`);
     const result = doAssert(
@@ -377,49 +249,71 @@ export async function sendWithLidFallback(
     );
     return { result, usedRecipient: contact };
   } catch (error) {
-    if (!isLidRequiredError(error)) throw error;
+    const errorMessage =
+      error instanceof Error ? error.message : String(error || '');
+
+    // Check if the error is a LID missing error or an encryption rejection (ack=-1)
+    const isCryptoRejection =
+      errorMessage.includes('ack=-1') ||
+      errorMessage.includes('ACK_ERROR') ||
+      errorMessage.includes('rejected message');
+
+    if (!isLidRequiredError(error) && !isCryptoRejection) {
+      throw error; // Bubble up unknown errors (e.g., disconnected session)
+    }
 
     logger.info(
-      `[sendMessage] Send failed because WhatsApp requires LID for ${contact}.`
+      `[sendMessage] Send failed (${
+        isCryptoRejection ? 'Crypto/Ack Rejection' : 'LID Required'
+      }) for ${contact}. Forcing network sync.`
     );
   }
 
-  // ── Resolve LID and retry once ────────────────────────────────────
-  logger.info(`[sendMessage] Retrying once with refreshed LID for ${contact}.`);
-
-  const resolvedLid = await resolveRecipientLid(client, contact, logger);
-
-  if (!resolvedLid || !resolvedLid.endsWith('@lid')) {
-    throw new RecipientResolutionError(
-      `WhatsApp requires LID for ${contact} but no LID mapping could be resolved. ` +
-        'The contact may not exist on WhatsApp or the mapping is not yet available.',
-      'lid_required',
-      contact
-    );
-  }
-
-  logger.info(`[sendMessage] Sending using LID recipient for ${contact}.`);
+  // ── Force network sync (usync) and retry once ─────────────────────────
+  logger.info(
+    `[sendMessage] Forcing usync via checkNumberStatus for ${contact}.`
+  );
+  let validJid = contact;
 
   try {
-    const result = doAssert(
-      await client.sendText(resolvedLid, message, options),
-      resolvedLid
+    const profile = await withInternalTimeout(
+      client.checkNumberStatus(contact),
+      15000,
+      `checkNumberStatus ${contact}`
     );
-    return { result, usedRecipient: resolvedLid };
-  } catch (retryError) {
-    // Clear cache if the retry also failed
-    clearCachedLid(session, phone);
 
-    if (isLidRequiredError(retryError)) {
+    if (profile?.numberExists && profile?.id?._serialized) {
+      validJid = profile.id._serialized;
+      logger.info(`[sendMessage] Sync complete. Valid JID is ${validJid}.`);
+    } else {
       throw new RecipientResolutionError(
-        `WhatsApp still requires LID for ${contact} after resolution. ` +
-          'The resolved LID may be stale or invalid.',
-        'lid_required',
+        `WhatsApp checkNumberStatus indicates ${contact} does not exist on WhatsApp.`,
+        'no_whatsapp',
         contact
       );
     }
+  } catch (syncError: any) {
+    if (syncError instanceof RecipientResolutionError) throw syncError;
+    logger.warn(`[sendMessage] checkNumberStatus failed: ${syncError.message}`);
+    // If it failed due to timeout, we will still try to retry sending to the original contact
+  }
 
-    throw retryError;
+  logger.info(`[sendMessage] Retrying send to ${validJid} after sync.`);
+
+  try {
+    const result = doAssert(
+      await client.sendText(validJid, message, options),
+      validJid
+    );
+    return { result, usedRecipient: validJid };
+  } catch (retryError) {
+    const msg =
+      retryError instanceof Error ? retryError.message : String(retryError);
+    throw new RecipientResolutionError(
+      `WhatsApp rejected message to ${validJid} even after forcing sync. Error: ${msg}`,
+      'send_failed',
+      validJid
+    );
   }
 }
 
