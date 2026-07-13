@@ -18,9 +18,7 @@ import { Request, Response } from 'express';
 
 import { notifyMessageFailed } from '../util/telegramNotifier';
 import { unlinkAsync } from '../util/functions';
-
-const recipientLidCache = new Map<string, { lid: string; expiresAt: number }>();
-const RECIPIENT_LID_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+import { sendWithLidFallback, WhatsAppClient } from '../util/recipientResolver';
 
 function returnError(req: Request, res: Response, error: any) {
   req.logger.error(error);
@@ -82,102 +80,6 @@ function assertMessageWasAccepted(result: any, contact: string): any {
   }
 
   return result;
-}
-
-function isRejectedMessageError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error || '');
-  return message.includes('WhatsApp rejected message');
-}
-
-async function sendTextResolvingRecipient(
-  req: Request,
-  contact: string,
-  message: string,
-  options: any
-): Promise<any> {
-  const session = (req.client as any)?.session || 'default';
-  const phone = contact.split('@')[0];
-  const cacheKey = `${session}:${phone}`;
-  const cached = recipientLidCache.get(cacheKey);
-
-  if (cached && cached.expiresAt > Date.now()) {
-    req.logger.debug(`[sendMessage] Using cached LID for ${contact}.`);
-    try {
-      return assertMessageWasAccepted(
-        await req.client.sendText(cached.lid, message, options),
-        cached.lid
-      );
-    } catch (error) {
-      const cachedError =
-        error instanceof Error ? error.message : String(error || '');
-      recipientLidCache.delete(cacheKey);
-      if (!cachedError.includes('No LID for user')) throw error;
-    }
-  } else if (cached) {
-    recipientLidCache.delete(cacheKey);
-  }
-
-  try {
-    return assertMessageWasAccepted(
-      await req.client.sendText(contact, message, options),
-      contact
-    );
-  } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : String(error || '');
-
-    // Recent WhatsApp Web versions may require the privacy-preserving LID
-    // instead of the legacy @c.us JID. Resolve it lazily only when necessary,
-    // keeping the common send path fast.
-    if (!errorMessage.includes('No LID for user')) throw error;
-
-    req.logger.info(
-      `[sendMessage] Resolving current WhatsApp identifier for ${contact}.`
-    );
-    let resolvedContact: string | undefined;
-
-    try {
-      const mapping: any = await (req.client as any).getPnLidEntry(contact);
-      resolvedContact = mapping?.lid?._serialized;
-    } catch (mappingError) {
-      req.logger.debug(
-        `[sendMessage] Direct PN/LID lookup failed for ${contact}: ${String(
-          mappingError
-        )}`
-      );
-    }
-
-    if (!resolvedContact) {
-      const profile: any = await req.client.checkNumberStatus(contact);
-      const profileId = profile?.id?._serialized;
-      if (profile?.numberExists && profileId?.endsWith('@lid')) {
-        resolvedContact = profileId;
-      }
-    }
-
-    // Retrying the same @c.us value can never fix "No LID for user".
-    if (!resolvedContact?.endsWith('@lid')) throw error;
-
-    req.logger.info(`[sendMessage] Retrying ${contact} as ${resolvedContact}.`);
-    try {
-      const result = assertMessageWasAccepted(
-        await req.client.sendText(resolvedContact, message, options),
-        resolvedContact
-      );
-
-      recipientLidCache.set(cacheKey, {
-        lid: resolvedContact,
-        expiresAt: Date.now() + RECIPIENT_LID_CACHE_TTL_MS,
-      });
-
-      return result;
-    } catch (retryError) {
-      if (isRejectedMessageError(retryError)) {
-        recipientLidCache.delete(cacheKey);
-      }
-      throw retryError;
-    }
-  }
 }
 
 export async function sendMessage(req: Request, res: Response) {
@@ -250,13 +152,19 @@ export async function sendMessage(req: Request, res: Response) {
   try {
     const results: any = [];
     for (const contato of phone) {
-      results.push(
-        await withTimeout(
-          sendTextResolvingRecipient(req, contato, message, options),
-          sendTimeoutMs,
-          `sendText ${contato}`
-        )
+      const { result } = await withTimeout(
+        sendWithLidFallback(
+          req.client as unknown as WhatsAppClient,
+          contato,
+          message,
+          options,
+          req.logger,
+          assertMessageWasAccepted
+        ),
+        sendTimeoutMs,
+        `sendText ${contato}`
       );
+      results.push(result);
     }
 
     if (results.length === 0)

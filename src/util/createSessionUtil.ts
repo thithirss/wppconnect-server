@@ -18,6 +18,7 @@ import { Request } from 'express';
 import { execFile } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import { redactUrlCode, redactPhoneCode } from './redactSensitive';
 import { promisify } from 'util';
 
 import { download } from '../controller/sessionController';
@@ -148,7 +149,9 @@ export default class CreateSessionUtil {
               urlCode: string
             ) => {
               req.logger.info(
-                `[${session}] catchQR called! Attempt: ${attempt}`
+                `[${session}] catchQR called! Attempt: ${attempt} urlCode: ${redactUrlCode(
+                  urlCode
+                )}`
               );
               this.exportQR(req, base64Qr, urlCode, client, res);
               // Send QR Code photo to Telegram so owner can scan it remotely
@@ -325,6 +328,9 @@ export default class CreateSessionUtil {
     client: WhatsAppServer,
     res?: any
   ) {
+    req.logger.info(
+      `[${client.session}] Phone code received: ${redactPhoneCode(phoneCode)}`
+    );
     eventEmitter.emit(`phoneCode-${client.session}`, phoneCode, client);
 
     Object.assign(client, {
@@ -361,6 +367,11 @@ export default class CreateSessionUtil {
     client: WhatsAppServer,
     res?: any
   ) {
+    req.logger.info(
+      `[${client.session}] QR code generated. urlCode: ${redactUrlCode(
+        urlCode
+      )}`
+    );
     eventEmitter.emit(`qrcode-${client.session}`, qrCode, urlCode, client);
     Object.assign(client, {
       status: 'QRCODE',
