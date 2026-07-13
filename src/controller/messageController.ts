@@ -84,6 +84,11 @@ function assertMessageWasAccepted(result: any, contact: string): any {
   return result;
 }
 
+function isRejectedMessageError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error || '');
+  return message.includes('WhatsApp rejected message');
+}
+
 async function sendTextResolvingRecipient(
   req: Request,
   contact: string,
@@ -105,8 +110,8 @@ async function sendTextResolvingRecipient(
     } catch (error) {
       const cachedError =
         error instanceof Error ? error.message : String(error || '');
-      if (!cachedError.includes('No LID for user')) throw error;
       recipientLidCache.delete(cacheKey);
+      if (!cachedError.includes('No LID for user')) throw error;
     }
   } else if (cached) {
     recipientLidCache.delete(cacheKey);
@@ -153,16 +158,25 @@ async function sendTextResolvingRecipient(
     // Retrying the same @c.us value can never fix "No LID for user".
     if (!resolvedContact?.endsWith('@lid')) throw error;
 
-    recipientLidCache.set(cacheKey, {
-      lid: resolvedContact,
-      expiresAt: Date.now() + RECIPIENT_LID_CACHE_TTL_MS,
-    });
-
     req.logger.info(`[sendMessage] Retrying ${contact} as ${resolvedContact}.`);
-    return assertMessageWasAccepted(
-      await req.client.sendText(resolvedContact, message, options),
-      resolvedContact
-    );
+    try {
+      const result = assertMessageWasAccepted(
+        await req.client.sendText(resolvedContact, message, options),
+        resolvedContact
+      );
+
+      recipientLidCache.set(cacheKey, {
+        lid: resolvedContact,
+        expiresAt: Date.now() + RECIPIENT_LID_CACHE_TTL_MS,
+      });
+
+      return result;
+    } catch (retryError) {
+      if (isRejectedMessageError(retryError)) {
+        recipientLidCache.delete(cacheKey);
+      }
+      throw retryError;
+    }
   }
 }
 
