@@ -67,6 +67,9 @@ RUN npm prune --omit=dev --legacy-peer-deps \
     && npm cache clean --force
 
 COPY --from=build /usr/src/wpp-server/dist ./dist
+COPY scripts/check-runtime-deps.js ./scripts/check-runtime-deps.js
+RUN node scripts/check-runtime-deps.js
+
 RUN mkdir -p /data/userDataDir /data/tokens /usr/src/wpp-server/log \
     && ln -s /data/tokens /usr/src/wpp-server/tokens \
     && ln -s /data/userDataDir /usr/src/wpp-server/userDataDir \
