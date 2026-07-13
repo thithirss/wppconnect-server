@@ -73,6 +73,17 @@ async function withTimeout<T>(
   }
 }
 
+function assertMessageWasAccepted(result: any, contact: string): any {
+  if (result?.isSendFailure === true) {
+    const id = result?.id ? ` id=${result.id}` : '';
+    const to = result?.to ? ` to=${result.to}` : '';
+    const ack = result?.ack != null ? ` ack=${result.ack}` : '';
+    throw new Error(`WhatsApp rejected message to ${contact}.${id}${to}${ack}`);
+  }
+
+  return result;
+}
+
 async function sendTextResolvingRecipient(
   req: Request,
   contact: string,
@@ -87,7 +98,10 @@ async function sendTextResolvingRecipient(
   if (cached && cached.expiresAt > Date.now()) {
     req.logger.debug(`[sendMessage] Using cached LID for ${contact}.`);
     try {
-      return await req.client.sendText(cached.lid, message, options);
+      return assertMessageWasAccepted(
+        await req.client.sendText(cached.lid, message, options),
+        cached.lid
+      );
     } catch (error) {
       const cachedError =
         error instanceof Error ? error.message : String(error || '');
@@ -99,7 +113,10 @@ async function sendTextResolvingRecipient(
   }
 
   try {
-    return await req.client.sendText(contact, message, options);
+    return assertMessageWasAccepted(
+      await req.client.sendText(contact, message, options),
+      contact
+    );
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : String(error || '');
@@ -142,7 +159,10 @@ async function sendTextResolvingRecipient(
     });
 
     req.logger.info(`[sendMessage] Retrying ${contact} as ${resolvedContact}.`);
-    return req.client.sendText(resolvedContact, message, options);
+    return assertMessageWasAccepted(
+      await req.client.sendText(resolvedContact, message, options),
+      resolvedContact
+    );
   }
 }
 
